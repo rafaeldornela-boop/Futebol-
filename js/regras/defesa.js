@@ -24,6 +24,12 @@ import {
   coletarModificadoresPassivosTime,
   listarHabilidadesDefensivasTime,
 } from './habilidades.js';
+import {
+  obterAjustesChancePostura,
+  obterBonusContraAtaquePostura,
+  obterMultiplicadorPressaoLinhaPostura,
+  POSTURA_PADRAO,
+} from './postura.js';
 
 export const ORDENS_DEFENSIVAS = Object.freeze({
   pressionar: {
@@ -111,6 +117,7 @@ export function avaliarCustoOrdemDefensiva(estado, tipoOrdem, contextoDefesa = n
   const reducaoMeta = estado?.modificadoresMeta?.reducaoCustoEstamina || 0;
 
   if (tipoOrdem === 'recuar') {
+    const posturaMeu = estado?.posturas?.meuTime || POSTURA_PADRAO;
     const movimentos = simularDeslocamentoBloco(
       estado.times.meuTime,
       'meuTime',
@@ -118,6 +125,7 @@ export function avaliarCustoOrdemDefensiva(estado, tipoOrdem, contextoDefesa = n
       estado.times.meuTime.formacao,
       -1,
       reducaoMeta,
+      posturaMeu,
     );
     const comSaldo = movimentos.filter((m) => m.estaminaAtual >= m.custo);
     const custoTotal = movimentos.reduce(
@@ -306,10 +314,18 @@ export function calcularChanceCartaoAmarelo(marcador) {
  * Constrói o mapa de modificadores de pressão para o time defensor neste turno.
  */
 export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
+  const posturaDefensor = estado?.posturas?.[timeDefensorId] || POSTURA_PADRAO;
+  const multLinhaPostura = obterMultiplicadorPressaoLinhaPostura(posturaDefensor);
+  const extraLinha =
+    multLinhaPostura !== 1 ? { multiplicadorLinhaGeral: multLinhaPostura } : {};
+
   if (timeDefensorId === 'rival') {
     const carrinho = estado.defesaRivalTurno?.carrinho;
-    if (!carrinho) return null;
+    if (!carrinho) {
+      return multLinhaPostura !== 1 ? extraLinha : null;
+    }
     return {
+      ...extraLinha,
       multiplicadorPortadorPorJogador: {
         [carrinho.jogadorId]: carrinho.multiplicador,
       },
@@ -318,7 +334,7 @@ export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
   }
 
   if (timeDefensorId !== 'meuTime' || !estado.defesaTurno) {
-    return null;
+    return multLinhaPostura !== 1 ? extraLinha : null;
   }
 
   const { ordem, zonaBolaAnunciada, zonaDestinoAnunciada, habilidadeAtiva } =
@@ -328,6 +344,7 @@ export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
     habilidadeAtiva?.efeito?.tipo === 'multiplicador_pressao_portador_jogador'
   ) {
     return {
+      ...extraLinha,
       multiplicadorPortadorPorJogador: {
         [habilidadeAtiva.jogadorId]: habilidadeAtiva.efeito.multiplicador,
       },
@@ -337,6 +354,7 @@ export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
 
   if (ordem === 'pressionar' && zonaBolaAnunciada) {
     return {
+      ...extraLinha,
       multiplicadorPortadorPorZona: {
         [zonaBolaAnunciada]: DEFESA_CONFIG.multiplicadorPressionarPortador,
       },
@@ -345,6 +363,7 @@ export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
 
   if (ordem === 'fechar_linha' && zonaDestinoAnunciada) {
     return {
+      ...extraLinha,
       fecharLinha: {
         zonaAlvo: zonaDestinoAnunciada,
         multAlvo: DEFESA_CONFIG.multiplicadorFecharLinhaAlvo,
@@ -353,7 +372,7 @@ export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
     };
   }
 
-  return null;
+  return multLinhaPostura !== 1 ? extraLinha : null;
 }
 
 /**
@@ -387,19 +406,52 @@ export function obterBonusDefesaGoleiroTurno(estado, timeDefensorId) {
  * Retorna os ajustes diretos na chance (%) para o time atacante no turno atual.
  */
 export function obterAjustesChanceTurno(estado, timeAtacanteId, acao, tipoPasseId = null) {
-  const ajustes = [];
+  const posturaMeu = estado?.posturas?.meuTime || POSTURA_PADRAO;
+  const posturaRival = estado?.posturas?.rival || POSTURA_PADRAO;
+  const posturaAtacante = timeAtacanteId === 'meuTime' ? posturaMeu : posturaRival;
+
+  const ajustes = [
+    ...obterAjustesChancePostura(posturaAtacante, acao, tipoPasseId),
+  ];
 
   if (timeAtacanteId === 'meuTime') {
     if (estado.bonusContraAtaqueMeu) {
+      const extraPostura = obterBonusContraAtaquePostura({
+        posturaRecuperador: posturaMeu,
+        posturaPerdedor: posturaRival,
+      });
       ajustes.push({
-        rotulo: 'Contra-ataque',
-        valor: DEFESA_CONFIG.bonusContraAtaque,
+        rotulo:
+          extraPostura > 0
+            ? `Contra-ataque (+${extraPostura}% postura)`
+            : 'Contra-ataque',
+        valor: DEFESA_CONFIG.bonusContraAtaque + extraPostura,
+      });
+    }
+    if ((estado.descontoRelogioAtual || 0) > 0) {
+      ajustes.push({
+        rotulo: 'Desconto relógio',
+        valor: -Math.abs(estado.descontoRelogioAtual),
       });
     }
     return ajustes;
   }
 
   // Turno do time rival
+  if (estado.bonusContraAtaqueRival) {
+    const extraPostura = obterBonusContraAtaquePostura({
+      posturaRecuperador: posturaRival,
+      posturaPerdedor: posturaMeu,
+    });
+    ajustes.push({
+      rotulo:
+        extraPostura > 0
+          ? `Contra-ataque rival (+${extraPostura}% postura)`
+          : 'Contra-ataque rival',
+      valor: DEFESA_CONFIG.bonusContraAtaque + extraPostura,
+    });
+  }
+
   if (estado.bonusProximaJogadaRival > 0) {
     ajustes.push({
       rotulo: 'Espaço pós-pressão',
@@ -432,14 +484,15 @@ export function obterAjustesChanceTurno(estado, timeAtacanteId, acao, tipoPasseI
 }
 
 /**
- * Avalia se uma jogada recuperada pelo meu time (desarme ou interceptação)
- * ativa o bônus de contra-ataque (+10 na primeira jogada).
+ * Avalia se uma jogada recuperada (desarme ou interceptação) ativa contra-ataque
+ * quando o adversário estava na fase FRENTE.
  */
 export function verificarAtivacaoContraAtaque(estadoAntes, tipoResultado, timeVencedorPosse) {
-  if (timeVencedorPosse !== 'meuTime') return false;
+  if (timeVencedorPosse !== 'meuTime' && timeVencedorPosse !== 'rival') return false;
   if (tipoResultado !== 'interceptacao' && tipoResultado !== 'desarme') return false;
-  const faseRival = obterFaseParaTime(estadoAntes.zonaBola, 'rival');
-  return faseRival === 'frente';
+  const perdedorId = timeVencedorPosse === 'meuTime' ? 'rival' : 'meuTime';
+  const fasePerdedor = obterFaseParaTime(estadoAntes.zonaBola, perdedorId);
+  return fasePerdedor === 'frente';
 }
 
 /**

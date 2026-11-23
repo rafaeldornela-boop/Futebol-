@@ -36,6 +36,7 @@ export function renderizarMenuInicial({
   onAbrirTrofeus,
   onPartidaAvulsa,
   onAbrirSimulacao,
+  onToggleRelogio,
 }) {
   const elContinuar = document.getElementById('btn-continuar-campanha');
   const elClubes = document.getElementById('menu-opcoes-clube');
@@ -45,6 +46,9 @@ export function renderizarMenuInicial({
   const elInputSeed = document.getElementById('input-seed-titulo');
   const elPontosBadge = document.getElementById('menu-pontos-legado');
   const elTrofeusBadge = document.getElementById('menu-trofeus-contagem');
+  const elBtnToggleRelogio = document.getElementById('btn-toggle-relogio');
+  const elRelogioDesc = document.getElementById('menu-relogio-desc');
+  const elRelogioBadge = document.getElementById('menu-relogio-badge');
 
   if (elPontosBadge) {
     elPontosBadge.textContent = `${meta.pontosLegado} pts`;
@@ -151,6 +155,20 @@ export function renderizarMenuInicial({
     }
   }
 
+  if (elBtnToggleRelogio) {
+    const desligado = Boolean(meta?.opcoes?.relogioDesligado);
+    elBtnToggleRelogio.setAttribute('aria-checked', String(!desligado));
+    elBtnToggleRelogio.classList.toggle('ligado', !desligado);
+    if (elRelogioBadge) {
+      elRelogioBadge.textContent = desligado ? 'Desligado' : 'Ligado';
+    }
+    if (elRelogioDesc) {
+      elRelogioDesc.textContent = desligado
+        ? 'Desligado: sem limite de tempo em nenhuma dificuldade.'
+        : 'Ligado: 30s (Nív. 1–2), 20s (Nív. 3–4), 12s (Nív. 5)';
+    }
+  }
+
   // Listeners estáticos vinculados uma única vez via dataset guard
   const bindOnce = (id, handler) => {
     const node = document.getElementById(id);
@@ -167,6 +185,7 @@ export function renderizarMenuInicial({
   bindOnce('btn-abrir-trofeus', () => onAbrirTrofeus?.());
   bindOnce('btn-partida-rapida', () => onPartidaAvulsa?.());
   bindOnce('btn-abrir-simulacao', () => onAbrirSimulacao?.());
+  bindOnce('btn-toggle-relogio', () => onToggleRelogio?.());
 
   if (elInputSeed && !elInputSeed.dataset.boundMenu) {
     elInputSeed.dataset.boundMenu = '1';

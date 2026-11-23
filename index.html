@@ -80,6 +80,23 @@
             </button>
           </div>
         </div>
+
+        <div class="menu-config-bloco">
+          <span class="titulo-seed-label">Opções de partida</span>
+          <button
+            id="btn-toggle-relogio"
+            type="button"
+            class="menu-toggle-relogio"
+            role="switch"
+            aria-checked="false"
+          >
+            <span class="toggle-relogio-texto">
+              <strong>Relógio de decisão (Dificuldades 1–5)</strong>
+              <span id="menu-relogio-desc" class="menu-chip-sub">Ligado: 30s (Nív. 1–2), 20s (Nív. 3–4), 12s (Nív. 5)</span>
+            </span>
+            <span id="menu-relogio-badge" class="toggle-relogio-badge num-tabular">Ligado</span>
+          </button>
+        </div>
       </div>
 
       <div class="titulo-acoes-principais">
@@ -177,6 +194,44 @@
               <option value="motivador">Motivador (+2 atributos)</option>
               <option value="negociador">Negociador</option>
               <option value="fisiologista">Fisiologista</option>
+            </select>
+          </div>
+
+          <div class="sim-campo">
+            <label for="sim-formacao-meu" class="titulo-seed-label">Minha formação</label>
+            <select id="sim-formacao-meu" class="input-seed">
+              <option value="4-3-3">4-3-3 Clássico</option>
+              <option value="4-4-2">4-4-2 Dupla de Ataque</option>
+              <option value="3-5-2">3-5-2 Três Zagueiros</option>
+              <option value="4-2-3-1">4-2-3-1 Meia Central</option>
+            </select>
+          </div>
+
+          <div class="sim-campo">
+            <label for="sim-postura-meu" class="titulo-seed-label">Minha postura</label>
+            <select id="sim-postura-meu" class="input-seed">
+              <option value="equilibrada">Equilibrada</option>
+              <option value="ofensiva">Ofensiva</option>
+              <option value="defensiva">Defensiva</option>
+            </select>
+          </div>
+
+          <div class="sim-campo">
+            <label for="sim-formacao-rival" class="titulo-seed-label">Formação rival</label>
+            <select id="sim-formacao-rival" class="input-seed">
+              <option value="4-3-3">4-3-3 Clássico</option>
+              <option value="4-4-2">4-4-2 Dupla de Ataque</option>
+              <option value="3-5-2">3-5-2 Três Zagueiros</option>
+              <option value="4-2-3-1">4-2-3-1 Meia Central</option>
+            </select>
+          </div>
+
+          <div class="sim-campo">
+            <label for="sim-postura-rival" class="titulo-seed-label">Postura inicial rival</label>
+            <select id="sim-postura-rival" class="input-seed">
+              <option value="equilibrada">Equilibrada</option>
+              <option value="ofensiva">Ofensiva</option>
+              <option value="defensiva">Defensiva</option>
             </select>
           </div>
         </div>
@@ -346,6 +401,15 @@
 
         <div class="acoes-util">
           <button
+            id="btn-abrir-postura"
+            type="button"
+            class="btn-postura-hud"
+            title="Alterar postura tática no início do turno de ataque (máx. 2× por partida)"
+          >
+            Postura: Equilibrada · 2/2
+          </button>
+
+          <button
             id="btn-som"
             type="button"
             class="btn-icone"
@@ -394,6 +458,24 @@
         <div class="rotulo-direcao-campo">
           <span class="rotulo-ataque-dir">↑ Ataque · Gol Rival (GKR)</span>
           <span id="fase-atual-rotulo" class="fase-atual-rotulo">Fase: Bola atrás · 4-3-3</span>
+        </div>
+
+        <div
+          id="bloco-relogio-turno"
+          class="bloco-relogio-turno"
+          data-ativo="false"
+          data-pausado="false"
+          data-faixa="desligado"
+          aria-live="off"
+        >
+          <div class="relogio-turno-cab">
+            <span id="relogio-turno-texto" class="relogio-turno-texto num-tabular">Sem relógio (Nív. 0)</span>
+            <span id="relogio-turno-pausa" class="relogio-turno-pausa" hidden>Pausado</span>
+            <span id="relogio-turno-desconto" class="relogio-turno-desconto num-tabular" hidden></span>
+          </div>
+          <div class="relogio-turno-trilha">
+            <div id="relogio-turno-fill" class="relogio-turno-fill"></div>
+          </div>
         </div>
 
         <div class="envelope-campo" id="envelope-campo">
@@ -558,8 +640,27 @@
           </div>
         </section>
 
-        <section class="bloco-painel" aria-label="Detalhes do cálculo">
-          <h2 class="titulo-bloco">Detalhes do cálculo</h2>
+        <section
+          id="bloco-detalhes-calculo"
+          class="bloco-painel bloco-detalhes-calculo"
+          tabindex="0"
+          aria-label="Detalhes do cálculo (passe o mouse ou foque para pausar o relógio)"
+        >
+          <div class="cabecalho-detalhes-calculo">
+            <h2 class="titulo-bloco">Detalhes do cálculo</h2>
+            <div class="acoes-detalhes-calculo">
+              <span id="badge-pausa-depuracao" class="badge-pausa-depuracao" hidden>Relógio pausado</span>
+              <button
+                id="btn-pausar-depuracao"
+                type="button"
+                class="btn-fantasma btn-mini-pausa"
+                aria-pressed="false"
+                title="Fixar pausa do relógio enquanto lê o painel"
+              >
+                Pausar relógio
+              </button>
+            </div>
+          </div>
           <div id="detalhes-calculo" class="detalhes-calculo">
             <p class="texto-suave">
               Selecione o portador e um alvo (passe, condução ou finalização) para inspecionar tipo, base, ATAQUE, pressões, chance final e sorteio.
@@ -607,8 +708,29 @@
       </p>
       <div class="acoes-modal">
         <button id="btn-retomar" type="button" class="btn-primario">Retomar</button>
+        <button id="btn-pausa-toggle-relogio" type="button" class="btn-secundario">
+          Relógio nas dif. 1–5: Ligado
+        </button>
         <button id="btn-reiniciar-pausa" type="button" class="btn-secundario">Reiniciar Partida</button>
         <button id="btn-voltar-titulo" type="button" class="btn-fantasma">Tela Inicial</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Postura Tática -->
+  <div id="modal-postura" class="sobreposicao-modal" role="dialog" aria-modal="true" aria-labelledby="titulo-postura" hidden>
+    <div class="cartao-modal cartao-modal-sub">
+      <div class="cabecalho-modal-sub">
+        <h2 id="titulo-postura" class="titulo-modal titulo-modal-sub">Postura Tática</h2>
+        <span id="postura-restantes-badge" class="sub-restantes-badge num-tabular">2/2 restantes</span>
+      </div>
+      <p id="postura-modal-desc" class="texto-modal texto-modal-sub">
+        Pode ser alterada até 2 vezes por partida no início do seu turno de ataque, sem gastar o turno.
+      </p>
+      <div id="lista-posturas-modal" class="lista-posturas-modal"></div>
+      <p id="postura-modal-erro" class="no-aviso-erro" hidden></p>
+      <div class="acoes-modal">
+        <button id="btn-cancelar-postura" type="button" class="btn-secundario">Fechar</button>
       </div>
     </div>
   </div>

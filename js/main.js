@@ -26,6 +26,7 @@ import {
 } from './campanha/nos.js';
 import {
   anunciarIntencaoRival,
+  aplicarEstourouRelogioAtaque,
   aplicarOrdemDefensiva,
   avaliarConducao,
   avaliarFinalizacao,
@@ -36,6 +37,8 @@ import {
   obterPortador,
   obterResumoFinal,
   partida as executarPartidaEncapsulada,
+  reavaliarPrevia,
+  trocarPosturaNaPartida,
 } from './regras/partida.js';
 import {
   formatarMultiplicador,
@@ -52,6 +55,14 @@ import {
   obterHabilidadesJogador,
 } from './regras/habilidades.js';
 import {
+  obterConfigPostura,
+  obterTrocasPosturaRestantes,
+  ORDEM_POSTURAS,
+  podeTrocarPosturaPartida,
+  POSTURA_PADRAO,
+} from './regras/postura.js';
+import {
+  alternarRelogioMeta,
   carregarMeta,
   finalizarCampanhaNoMeta,
   modificadoresMeta,
@@ -63,6 +74,7 @@ import { criarControladorCampo } from './ui/campo.js';
 import { renderizarTelaClube } from './ui/clube.js';
 import { renderizarHudCampanha, renderizarMapaCampanha } from './ui/mapa.js';
 import { renderizarMenuInicial } from './ui/menu.js';
+import { criarControladorRelogio } from './ui/relogio.js';
 import {
   renderizarModalElenco,
   renderizarTelaEscalacao,
@@ -173,6 +185,9 @@ function iniciarJogo() {
   let rivalPensando = false;
   let temporizadorRival = null;
   let substituindoJogadorId = null;
+  let modalPosturaAberto = false;
+  let pausaDepuracaoFixa = false;
+  let hoverOuFocoDepuracao = false;
   let elencoModalAberto = false;
 
   // Elementos da Tela Inicial / Meta / Simulação
@@ -184,6 +199,10 @@ function iniciarJogo() {
   const elSimForcaValor = document.getElementById('sim-forca-valor');
   const elSimClube = document.getElementById('sim-clube');
   const elSimTecnico = document.getElementById('sim-tecnico');
+  const elSimFormacaoMeu = document.getElementById('sim-formacao-meu');
+  const elSimPosturaMeu = document.getElementById('sim-postura-meu');
+  const elSimFormacaoRival = document.getElementById('sim-formacao-rival');
+  const elSimPosturaRival = document.getElementById('sim-postura-rival');
   const elBtnRodarSimulacao = document.getElementById('btn-rodar-simulacao');
   const elSimResultado = document.getElementById('simulacao-resultado');
 
@@ -209,12 +228,22 @@ function iniciarJogo() {
   const elIconeOndas = document.getElementById('icone-som-ondas');
   const elBtnPausa = document.getElementById('btn-pausa');
   const elBtnReiniciarTopo = document.getElementById('btn-reiniciar-topo');
+  const elBlocoDetalhesCalculo = document.getElementById('bloco-detalhes-calculo');
+  const elBadgePausaDepuracao = document.getElementById('badge-pausa-depuracao');
+  const elBtnPausarDepuracao = document.getElementById('btn-pausar-depuracao');
 
   const elModalPausa = document.getElementById('modal-pausa');
   const elPausaPlacar = document.getElementById('pausa-placar');
   const elBtnRetomar = document.getElementById('btn-retomar');
+  const elBtnPausaToggleRelogio = document.getElementById('btn-pausa-toggle-relogio');
   const elBtnReiniciarPausa = document.getElementById('btn-reiniciar-pausa');
   const elBtnVoltarTitulo = document.getElementById('btn-voltar-titulo');
+
+  const elModalPostura = document.getElementById('modal-postura');
+  const elPosturaRestantesBadge = document.getElementById('postura-restantes-badge');
+  const elListaPosturasModal = document.getElementById('lista-posturas-modal');
+  const elPosturaModalErro = document.getElementById('postura-modal-erro');
+  const elBtnCancelarPostura = document.getElementById('btn-cancelar-postura');
 
   const elModalSub = document.getElementById('modal-substituicao');
   const elSubRestantesBadge = document.getElementById('sub-restantes-badge');
@@ -247,6 +276,43 @@ function iniciarJogo() {
 
   aplicarUniformeNoDom(modificadoresMeta(meta).uniforme);
 
+  const relogioUI = criarControladorRelogio({
+    elBarraWrap: document.getElementById('bloco-relogio-turno'),
+    elBarraFill: document.getElementById('relogio-turno-fill'),
+    elTempoTexto: document.getElementById('relogio-turno-texto'),
+    elDescontoTexto: document.getElementById('relogio-turno-desconto'),
+    elStatusPausa: document.getElementById('relogio-turno-pausa'),
+    onTickDesconto(desconto) {
+      partida.descontoRelogioAtual = desconto;
+      if (estadoTela !== 'playing' || partida.encerrada) return;
+      if (partida.timeComBola === 'meuTime' && previaJogada) {
+        const reavaliada = reavaliarPrevia(partida, previaJogada);
+        if (reavaliada) previaJogada = reavaliada;
+      } else if (
+        partida.timeComBola === 'rival' &&
+        partida.defesaTurno?.fase === 'aguardando_ordem' &&
+        partida.defesaTurno.intencaoAtual
+      ) {
+        const reavaliada = reavaliarPrevia(partida, partida.defesaTurno.intencaoAtual);
+        if (reavaliada) {
+          partida.defesaTurno.intencaoAtual = reavaliada;
+          previaJogada = reavaliada;
+        }
+      }
+      campoUI.renderizar(partida, {
+        portadorSelecionado,
+        previaJogada,
+        inspecionadoId,
+        rivalPensando,
+        habilidadeOfensivaModo,
+        infoRelogio: relogioUI.obterEstado(),
+      });
+    },
+    onTimeout(faseTipo) {
+      tratarEstourouRelogio(faseTipo);
+    },
+  });
+
   const campoUI = criarControladorCampo({
     onCliqueJogador: tratarCliqueJogador,
     onCliqueZona: tratarCliqueZona,
@@ -256,6 +322,7 @@ function iniciarJogo() {
     onCancelarJogada: cancelarPrevia,
     onOrdemDefensiva: tratarOrdemDefensiva,
     onAbrirSubstituicao: abrirModalSubstituicao,
+    onAbrirPostura: abrirModalPostura,
   });
 
   function limparTemporizadorRival() {
@@ -295,18 +362,36 @@ function iniciarJogo() {
     atualizarTela();
   }
 
+  function sincronizarPausaDepuracao() {
+    const pausaAtiva = pausaDepuracaoFixa || hoverOuFocoDepuracao;
+    relogioUI.definirPausa('depuracao', pausaAtiva);
+    if (elBadgePausaDepuracao) {
+      elBadgePausaDepuracao.hidden = !pausaAtiva || !relogioUI.obterEstado().ativo;
+    }
+    if (elBtnPausarDepuracao) {
+      elBtnPausarDepuracao.setAttribute('aria-pressed', String(pausaDepuracaoFixa));
+      elBtnPausarDepuracao.textContent = pausaDepuracaoFixa
+        ? 'Retomar relógio'
+        : 'Pausar relógio';
+    }
+  }
+
   function atualizarTela(feedbackClube = '') {
     document.body.dataset.state = estadoTela;
 
     elModalPausa.hidden = estadoTela !== 'paused';
     elModalFim.hidden = estadoTela !== 'gameover';
     elModalSub.hidden = estadoTela !== 'playing' || !substituindoJogadorId;
+    if (elModalPostura) {
+      elModalPostura.hidden = estadoTela !== 'playing' || !modalPosturaAberto;
+    }
     if (elModalElenco) {
       elModalElenco.hidden =
         !elencoModalAberto || (estadoTela !== 'campaign_map' && estadoTela !== 'campaign_node');
     }
 
     if (estadoTela === 'title') {
+      relogioUI.parar();
       selecaoNovaCampanha.clubeId = meta.clubeSelecionadoPadrao || selecaoNovaCampanha.clubeId;
       selecaoNovaCampanha.tecnicoId = meta.tecnicoSelecionadoPadrao || selecaoNovaCampanha.tecnicoId;
       selecaoNovaCampanha.dificuldade = Math.min(
@@ -355,11 +440,18 @@ function iniciarJogo() {
           som.clique();
           abrirSimulacao();
         },
+        onToggleRelogio: () => {
+          alternarRelogioMeta(meta);
+          salvarMeta(meta);
+          som.clique();
+          atualizarTela();
+        },
       });
       return;
     }
 
     if (estadoTela === 'club') {
+      relogioUI.parar();
       renderizarTelaClube(elConteudoClube, meta, {
         feedbackInicial: typeof feedbackClube === 'string' ? feedbackClube : '',
         onMetaAtualizada(novoMeta) {
@@ -374,6 +466,7 @@ function iniciarJogo() {
     }
 
     if (estadoTela === 'trophies') {
+      relogioUI.parar();
       renderizarSalaTrofeus(elConteudoTrofeus, meta, {
         onVoltarMenu: irParaTitulo,
       });
@@ -381,10 +474,12 @@ function iniciarJogo() {
     }
 
     if (estadoTela === 'simulation') {
+      relogioUI.parar();
       return;
     }
 
     if (estadoTela === 'campaign_map') {
+      relogioUI.parar();
       renderizarMapaCampanha(campanha, {
         onSelecionarNo: entrarNoCampanha,
       });
@@ -392,11 +487,13 @@ function iniciarJogo() {
     }
 
     if (estadoTela === 'campaign_node') {
+      relogioUI.parar();
       renderizarHudCampanha(campanha);
       return;
     }
 
     if (estadoTela === 'campaign_over') {
+      relogioUI.parar();
       renderizarHudCampanha(campanha);
       renderizarTelaFimCampanha(campanha, resultadoMetaFimCampanha);
       return;
@@ -404,8 +501,25 @@ function iniciarJogo() {
 
     atualizarPlacarCabecalho();
 
+    relogioUI.definirPausa('pausa', estadoTela === 'paused');
+    relogioUI.definirPausa('sub', estadoTela === 'playing' && Boolean(substituindoJogadorId));
+    relogioUI.definirPausa('postura', estadoTela === 'playing' && Boolean(modalPosturaAberto));
+    sincronizarPausaDepuracao();
+
+    if (estadoTela === 'playing') {
+      relogioUI.sincronizarTurno(partida, { rivalPensando });
+    } else if (estadoTela !== 'paused') {
+      relogioUI.parar();
+    }
+
     if (estadoTela === 'paused') {
       elPausaPlacar.textContent = `${partida.placar.meuTime} × ${partida.placar.rival}`;
+      if (elBtnPausaToggleRelogio) {
+        const desligado = Boolean(meta?.opcoes?.relogioDesligado);
+        elBtnPausaToggleRelogio.textContent = desligado
+          ? 'Relógio nas dif. 1–5: Desligado'
+          : 'Relógio nas dif. 1–5: Ligado';
+      }
     }
 
     if (estadoTela === 'gameover') {
@@ -418,6 +532,7 @@ function iniciarJogo() {
       inspecionadoId,
       rivalPensando,
       habilidadeOfensivaModo,
+      infoRelogio: relogioUI.obterEstado(),
     });
   }
 
@@ -494,6 +609,7 @@ function iniciarJogo() {
       mediaInicialTitulares: campanha.mediaInicialTitulares,
       forcaPersonalizada: forcaPersonalizada ?? no.rivalForca,
       bonusDificuldade: campanha.modificadoresMeta?.bonusForcaRival || 0,
+      formacao: campanha.formacaoRival,
     });
 
     const noContexto = { ...no, ehMisterioso };
@@ -502,11 +618,16 @@ function iniciarJogo() {
 
     renderizarTelaEscalacao(elConteudoNo, campanha, noContexto, rival, {
       onVoltarMapa: () => irParaMapaCampanha(),
-      onEntrarEmCampo: async ({ titularesPorPapel, reservasIds }) => {
+      onEntrarEmCampo: async ({ titularesPorPapel, reservasIds, formacao, postura }) => {
+        campanha.formacaoSelecionada = formacao;
+        campanha.posturaSelecionada = postura;
+        salvarCampanha(campanha);
+
         const meuTimeEscalado = montarTimeParaPartida(
           campanha,
           titularesPorPapel,
           reservasIds,
+          { formacao, postura },
         );
 
         resumoPosPartidaCampanha = null;
@@ -517,10 +638,20 @@ function iniciarJogo() {
           rival,
           {
             modificadoresMeta: campanha.modificadoresMeta,
+            dificuldade: campanha.dificuldade || 0,
+            posturaMeu: postura,
             iniciarPartidaUI(estadoPartida, concluir) {
               modoPartida = 'campanha';
               limparTemporizadorRival();
               substituindoJogadorId = null;
+              modalPosturaAberto = false;
+              pausaDepuracaoFixa = false;
+              hoverOuFocoDepuracao = false;
+              relogioUI.limparPausas();
+              relogioUI.configurar({
+                dificuldade: campanha.dificuldade || 0,
+                relogioDesligado: Boolean(meta?.opcoes?.relogioDesligado),
+              });
               partida = estadoPartida;
               portadorSelecionado = false;
               previaJogada = null;
@@ -654,6 +785,122 @@ function iniciarJogo() {
   // ==========================================================================
   // Substituição, Fim de Jogo e Fluxo da Partida
   // ==========================================================================
+
+  function fecharModalPostura({ atualizar = true } = {}) {
+    modalPosturaAberto = false;
+    if (elModalPostura) elModalPostura.hidden = true;
+    if (atualizar) atualizarTela();
+  }
+
+  function abrirModalPostura() {
+    if (estadoTela !== 'playing' || rivalPensando || partida.encerrada) return;
+    const checagem = podeTrocarPosturaPartida(partida, 'meuTime');
+    if (!checagem.permitido) return;
+
+    modalPosturaAberto = true;
+    const posturaAtualId = partida.posturas?.meuTime || POSTURA_PADRAO;
+    const restantes = obterTrocasPosturaRestantes(partida, 'meuTime');
+
+    if (elPosturaRestantesBadge) {
+      elPosturaRestantesBadge.textContent = `${restantes}/2 restantes`;
+    }
+    if (elPosturaModalErro) {
+      elPosturaModalErro.hidden = true;
+      elPosturaModalErro.textContent = '';
+    }
+
+    if (elListaPosturasModal) {
+      elListaPosturasModal.innerHTML = '';
+      for (const pId of ORDEM_POSTURAS) {
+        const cfg = obterConfigPostura(pId);
+        const ativa = pId === posturaAtualId;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `btn-postura-modal${ativa ? ' ativa' : ''}`;
+        btn.dataset.posturaEscolha = pId;
+        btn.disabled = ativa;
+
+        const topo = document.createElement('div');
+        topo.className = 'reserva-topo';
+        const tit = document.createElement('strong');
+        tit.className = 'reserva-nome';
+        tit.textContent = cfg.nome;
+        const tag = document.createElement('span');
+        tag.className = 'postura-modal-tag';
+        tag.textContent = ativa ? 'Ativa no momento' : 'Selecionar (sem gastar turno)';
+        topo.append(tit, tag);
+
+        const desc = document.createElement('div');
+        desc.className = 'reserva-atributos';
+        desc.textContent = cfg.resumo;
+
+        btn.append(topo, desc);
+        btn.addEventListener('click', () => {
+          if (btn.disabled) return;
+          const res = trocarPosturaNaPartida(partida, pId, 'meuTime');
+          if (!res.valido) {
+            if (elPosturaModalErro) {
+              elPosturaModalErro.textContent = res.motivo;
+              elPosturaModalErro.hidden = false;
+            }
+            return;
+          }
+          modalPosturaAberto = false;
+          portadorSelecionado = false;
+          previaJogada = null;
+          habilidadeOfensivaModo = null;
+          som.clique();
+          atualizarTela();
+        });
+        elListaPosturasModal.appendChild(btn);
+      }
+    }
+
+    som.clique();
+    atualizarTela();
+  }
+
+  function tratarEstourouRelogio(faseTipo) {
+    if (estadoTela !== 'playing' || partida.encerrada) return;
+
+    if (faseTipo === 'ataque' && partida.timeComBola === 'meuTime') {
+      substituindoJogadorId = null;
+      modalPosturaAberto = false;
+      portadorSelecionado = false;
+      previaJogada = null;
+      habilidadeOfensivaModo = null;
+
+      const res = aplicarEstourouRelogioAtaque(partida);
+      if (!res.valido) {
+        atualizarTela();
+        return;
+      }
+
+      inspecionadoId = partida.portadorId;
+      som.interceptacao();
+
+      if (partida.encerrada) {
+        encerrarPartidaAtual();
+        return;
+      }
+
+      atualizarTela();
+      if (partida.timeComBola === 'rival') {
+        agendarTurnoRival();
+      }
+      return;
+    }
+
+    if (
+      faseTipo === 'defesa' &&
+      partida.timeComBola === 'rival' &&
+      partida.defesaTurno?.fase === 'aguardando_ordem'
+    ) {
+      substituindoJogadorId = null;
+      modalPosturaAberto = false;
+      tratarOrdemDefensiva('nenhuma');
+    }
+  }
 
   function fecharModalSubstituicao({ atualizar = true } = {}) {
     substituindoJogadorId = null;
@@ -814,8 +1061,19 @@ function iniciarJogo() {
     resumoPosPartidaCampanha = null;
     limparTemporizadorRival();
     substituindoJogadorId = null;
+    modalPosturaAberto = false;
+    pausaDepuracaoFixa = false;
+    hoverOuFocoDepuracao = false;
+    relogioUI.limparPausas();
+    relogioUI.configurar({
+      dificuldade: 0,
+      relogioDesligado: Boolean(meta?.opcoes?.relogioDesligado),
+    });
     const modsAtuais = modificadoresMeta(meta);
-    partida = criarPartida(undefined, { modificadoresMeta: modsAtuais });
+    partida = criarPartida(undefined, {
+      modificadoresMeta: modsAtuais,
+      dificuldade: 0,
+    });
     partida.times.meuTime.uniforme = modsAtuais.uniforme;
     aplicarUniformeNoDom(modsAtuais.uniforme);
     portadorSelecionado = false;
@@ -834,8 +1092,12 @@ function iniciarJogo() {
 
   function irParaTitulo() {
     limparTemporizadorRival();
+    relogioUI.parar();
     resolverPartidaUI = null;
     substituindoJogadorId = null;
+    modalPosturaAberto = false;
+    pausaDepuracaoFixa = false;
+    hoverOuFocoDepuracao = false;
     elencoModalAberto = false;
     portadorSelecionado = false;
     previaJogada = null;
@@ -848,6 +1110,7 @@ function iniciarJogo() {
     if (estadoTela !== 'playing') return;
     limparTemporizadorRival();
     substituindoJogadorId = null;
+    modalPosturaAberto = false;
     estadoTela = 'paused';
     atualizarTela();
   }
@@ -1184,11 +1447,19 @@ function iniciarJogo() {
     const forcaRival = Number(elSimForca?.value || 71);
     const clubeId = elSimClube?.value || 'equilibrado';
     const tecnicoId = elSimTecnico?.value || 'padrao';
+    const formacaoMeu = elSimFormacaoMeu?.value || '4-3-3';
+    const posturaMeu = elSimPosturaMeu?.value || POSTURA_PADRAO;
+    const formacaoRival = elSimFormacaoRival?.value || '4-3-3';
+    const posturaRival = elSimPosturaRival?.value || POSTURA_PADRAO;
     const res = simularPartidasEquilibrio({
       quantidade: 200,
       forcaRival,
       clubeId,
       tecnicoId,
+      formacaoMeu,
+      posturaMeu,
+      formacaoRival,
+      posturaRival,
       meta,
     });
 
@@ -1197,7 +1468,7 @@ function iniciarJogo() {
     cabRes.className = 'meta-card-topo';
     const titRes = document.createElement('h3');
     titRes.className = 'escalacao-col-titulo';
-    titRes.textContent = `Resultado (${res.quantidade} partidas · ${res.clubeNome} · Téc. ${res.tecnicoNome} × Rival ${res.forcaRival})`;
+    titRes.textContent = `Resultado (${res.quantidade} partidas · ${res.formacaoMeu} ${res.posturaMeu} vs ${res.formacaoRival} ${res.posturaRival} · Rival ${res.forcaRival})`;
     const placarGeral = document.createElement('span');
     placarGeral.className = 'meta-nivel-badge num-tabular';
     placarGeral.textContent = `${res.vitorias}V · ${res.empates}E · ${res.derrotas}D`;
@@ -1286,9 +1557,55 @@ function iniciarJogo() {
 
   elBtnJogarNovamente?.addEventListener('click', () => comecarPartidaAvulsa());
   elBtnRetomar?.addEventListener('click', retomarPartida);
+  elBtnPausaToggleRelogio?.addEventListener('click', () => {
+    alternarRelogioMeta(meta);
+    salvarMeta(meta);
+    relogioUI.configurar({
+      dificuldade: partida?.dificuldadePartida || 0,
+      relogioDesligado: Boolean(meta?.opcoes?.relogioDesligado),
+    });
+    som.clique();
+    atualizarTela();
+  });
   elBtnReiniciarPausa?.addEventListener('click', () => comecarPartidaAvulsa());
   elBtnVoltarTitulo?.addEventListener('click', irParaTitulo);
   elBtnFimTitulo?.addEventListener('click', irParaTitulo);
+
+  elBtnCancelarPostura?.addEventListener('click', () => {
+    som.clique();
+    fecharModalPostura();
+  });
+
+  elModalPostura?.addEventListener('click', (evento) => {
+    if (evento.target === elModalPostura) {
+      som.clique();
+      fecharModalPostura();
+    }
+  });
+
+  elBlocoDetalhesCalculo?.addEventListener('mouseenter', () => {
+    hoverOuFocoDepuracao = true;
+    sincronizarPausaDepuracao();
+  });
+  elBlocoDetalhesCalculo?.addEventListener('mouseleave', () => {
+    hoverOuFocoDepuracao = false;
+    sincronizarPausaDepuracao();
+  });
+  elBlocoDetalhesCalculo?.addEventListener('focusin', () => {
+    hoverOuFocoDepuracao = true;
+    sincronizarPausaDepuracao();
+  });
+  elBlocoDetalhesCalculo?.addEventListener('focusout', (ev) => {
+    if (!elBlocoDetalhesCalculo.contains(ev.relatedTarget)) {
+      hoverOuFocoDepuracao = false;
+      sincronizarPausaDepuracao();
+    }
+  });
+  elBtnPausarDepuracao?.addEventListener('click', () => {
+    pausaDepuracaoFixa = !pausaDepuracaoFixa;
+    som.clique();
+    sincronizarPausaDepuracao();
+  });
 
   elBtnCancelarSub?.addEventListener('click', () => {
     som.clique();
@@ -1350,6 +1667,12 @@ function iniciarJogo() {
       evento.preventDefault();
       elencoModalAberto = false;
       atualizarTela();
+      return;
+    }
+
+    if (tecla === 'Escape' && estadoTela === 'playing' && modalPosturaAberto) {
+      evento.preventDefault();
+      fecharModalPostura();
       return;
     }
 

@@ -9,30 +9,17 @@
  * - Rival substitui automaticamente quem estiver abaixo de 30 de estamina, até 5 trocas.
  */
 
+import { ehPosicaoNatural, SETOR_DO_PAPEL } from '../dados/formacoes.js';
 import { obterEstamina } from './estamina.js';
 
 export const MAX_SUBSTITUICOES_PARTIDA = 5;
 export const MAX_SUBSTITUICOES_POR_TURNO = 1;
 export const LIMIAR_ESTAMINA_SUB_RIVAL = 30;
 
-const SETOR_POR_PAPEL = Object.freeze({
-  GOL: 'GOL',
-  ZAG1: 'DEF',
-  ZAG2: 'DEF',
-  LAT_E: 'DEF',
-  LAT_D: 'DEF',
-  VOL: 'MEI',
-  MEI_E: 'MEI',
-  MEI_D: 'MEI',
-  PONTA_E: 'ATA',
-  PONTA_D: 'ATA',
-  CA: 'ATA',
-});
-
 export function obterSetorDoJogador(jogador) {
   if (!jogador) return 'MEI';
   if (jogador.ehGoleiro) return 'GOL';
-  return jogador.setor || SETOR_POR_PAPEL[jogador.papel] || 'MEI';
+  return jogador.setor || SETOR_DO_PAPEL[jogador.papel] || 'MEI';
 }
 
 export function obterSubstituicoesRestantes(estado, timeId) {
@@ -176,10 +163,12 @@ export function executarSubstituicao(estado, timeId, jogadorSaiId, jogadorEntraI
   entra.zonaBase = sai.zonaBase;
   entra.zona = sai.zona;
   entra.iniciaComBola = sai.iniciaComBola;
+  entra.foraDePosicao = !ehPosicaoNatural(entra, sai.papel);
 
   // Quem sai não volta
   sai.zona = null;
   sai.zonaBase = null;
+  sai.foraDePosicao = false;
   if (!sai.extras) sai.extras = {};
   sai.extras.substituido = true;
 
@@ -206,14 +195,15 @@ export function executarSubstituicao(estado, timeId, jogadorSaiId, jogadorEntraI
   };
 }
 
-function pontuarReservaParaVaga(reserva, setorAlvo) {
+function pontuarReservaParaVaga(reserva, setorAlvo, papelAlvo = null) {
   const setorRes = obterSetorDoJogador(reserva);
   const bonusSetor = setorRes === setorAlvo ? 40 : 0;
+  const bonusNatural = papelAlvo && ehPosicaoNatural(reserva, papelAlvo) ? 20 : 0;
   const a = reserva.atributos;
   const media =
     (a.passe + a.dominio + a.posicionamento + a.marcacao + a.desarme + a.tecnica + a.velocidade) /
     7;
-  return bonusSetor + media + (reserva.ehGoleiro ? a.defesa || 0 : 0);
+  return bonusSetor + bonusNatural + media + (reserva.ehGoleiro ? a.defesa || 0 : 0);
 }
 
 /**
@@ -239,7 +229,8 @@ export function verificarSubstituicaoAutomaticaRival(estado) {
       .filter((r) => Boolean(r.ehGoleiro) === Boolean(sai.ehGoleiro))
       .sort(
         (a, b) =>
-          pontuarReservaParaVaga(b, setorAlvo) - pontuarReservaParaVaga(a, setorAlvo),
+          pontuarReservaParaVaga(b, setorAlvo, sai.papel) -
+          pontuarReservaParaVaga(a, setorAlvo, sai.papel),
       );
 
     if (compativeis.length > 0) {

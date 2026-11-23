@@ -19,6 +19,8 @@ import {
   criarPartida,
   executarJogada,
 } from '../regras/partida.js';
+import { FORMACAO_PADRAO, obterFormacao } from '../dados/formacoes.js';
+import { normalizarPosturaId, POSTURA_PADRAO } from '../regras/postura.js';
 import { escolherJogadaIA } from '../rival/ia.js';
 
 function calcularMediaEstaminaCampo(jogadores) {
@@ -35,11 +37,19 @@ export function simularPartidasEquilibrio({
   forcaRival = 71,
   clubeId = 'equilibrado',
   tecnicoId = 'padrao',
+  formacaoMeu = FORMACAO_PADRAO,
+  posturaMeu = POSTURA_PADRAO,
+  formacaoRival = FORMACAO_PADRAO,
+  posturaRival = POSTURA_PADRAO,
   meta = null,
   seedBase = 'SIM-EQUILIBRIO',
 } = {}) {
   const total = Math.max(1, Math.min(1000, Math.floor(Number(quantidade) || 200)));
   const forca = Math.max(50, Math.min(100, Number(forcaRival) || 71));
+  const formMeuId = obterFormacao(formacaoMeu).id;
+  const formRivalId = obterFormacao(formacaoRival).id;
+  const postMeuId = normalizarPosturaId(posturaMeu);
+  const postRivalId = normalizarPosturaId(posturaRival);
 
   const mods = modificadoresMeta(meta, {
     clubeId,
@@ -50,7 +60,7 @@ export function simularPartidasEquilibrio({
 
   const elencoBase = criarElencoInicialCampanha(mods);
   const mediaMeu = calcularMediaTitularesInicial(elencoBase);
-  const esc = prepararEscalacaoPadrao(elencoBase);
+  const esc = prepararEscalacaoPadrao(elencoBase, formMeuId);
   const campFicticia = {
     elenco: elencoBase,
     moral: 0,
@@ -62,6 +72,7 @@ export function simularPartidasEquilibrio({
     campFicticia,
     esc.titularesPorPapel,
     esc.reservasIds,
+    { formacao: formMeuId, postura: postMeuId },
   );
 
   let vitorias = 0;
@@ -73,7 +84,7 @@ export function simularPartidasEquilibrio({
   let somaEstaminaRival = 0;
 
   for (let i = 0; i < total; i += 1) {
-    const rng = criarRng(`${seedBase}::p${i}::f${forca}`);
+    const rng = criarRng(`${seedBase}::p${i}::f${forca}::${formMeuId}_${postMeuId}::${formRivalId}_${postRivalId}`);
     const rival = gerarRivalPorCamada({
       seed: seedBase,
       noId: `sim_${i}`,
@@ -81,6 +92,7 @@ export function simularPartidasEquilibrio({
       ehChefao: false,
       mediaInicialTitulares: mediaMeu,
       forcaPersonalizada: forca,
+      formacao: formRivalId,
     });
 
     const estado = criarPartida(
@@ -88,7 +100,11 @@ export function simularPartidasEquilibrio({
         meuTime: structuredClone(meuTimeModelo),
         rival,
       },
-      { modificadoresMeta: mods },
+      {
+        modificadoresMeta: mods,
+        posturaMeu: postMeuId,
+        posturaRival: postRivalId,
+      },
     );
 
     let passos = 0;
@@ -131,6 +147,10 @@ export function simularPartidasEquilibrio({
     clubeNome: mods.clubeNome,
     tecnicoId: mods.tecnicoId,
     tecnicoNome: mods.tecnicoNome,
+    formacaoMeu: formMeuId,
+    posturaMeu: postMeuId,
+    formacaoRival: formRivalId,
+    posturaRival: postRivalId,
     vitorias,
     empates,
     derrotas,

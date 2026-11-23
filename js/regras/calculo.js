@@ -300,6 +300,12 @@ export function calcularPressaoZona(
     const { zonaAlvo, multAlvo, multOutras } = modificadoresPressao.fecharLinha;
     brutaLinha *= zonaId === zonaAlvo ? multAlvo : multOutras;
   }
+  if (
+    modificadoresPressao?.multiplicadorLinhaGeral &&
+    modificadoresPressao.multiplicadorLinhaGeral !== 1
+  ) {
+    brutaLinha *= modificadoresPressao.multiplicadorLinhaGeral;
+  }
 
   const pressaoPortador = limitar(Math.round(brutaPortador), 0, 100);
   const pressaoLinha = limitar(Math.round(brutaLinha), 0, 100);

@@ -3,7 +3,14 @@
  * Evento, Descanso, Fisioterapia, Torcida, Misterioso), Inspetor de Elenco e Fim de Campanha.
  */
 
-import { PAPEIS_433 } from '../dados/formacoes.js';
+import {
+  ehPosicaoNatural,
+  FORMACAO_PADRAO,
+  obterFormacao,
+  obterPapeisFormacao,
+  ROTULOS_PAPEIS,
+} from '../dados/formacoes.js';
+import { normalizarPosturaId, POSTURA_PADRAO } from '../regras/postura.js';
 import { CAMPANHA_CONFIG, METADADOS_NO } from '../campanha/constantes.js';
 import {
   ATRIBUTOS_LINHA,
@@ -30,20 +37,7 @@ import {
 } from '../campanha/nos.js';
 import { obterEstamina, obterFaixaFadiga } from '../regras/estamina.js';
 import { obterHabilidadesJogador } from '../regras/habilidades.js';
-
-const ROTULOS_PAPEIS = Object.freeze({
-  GOL: 'GOL',
-  ZAG1: 'ZAG (Cob.)',
-  ZAG2: 'ZAG',
-  LAT_E: 'LAT E',
-  LAT_D: 'LAT D',
-  VOL: 'VOL',
-  MEI_E: 'MEI E',
-  MEI_D: 'MEI D',
-  PONTA_E: 'PONTA E',
-  PONTA_D: 'PONTA D',
-  CA: 'CA',
-});
+import { renderizarPainelFormacaoHeatmap } from './formacao.js';
 
 function el(tag, classe, texto) {
   const node = document.createElement(tag);
@@ -83,7 +77,10 @@ export function renderizarTelaEscalacao(
   rival,
   { onEntrarEmCampo, onVoltarMapa } = {},
 ) {
-  const inicial = prepararEscalacaoPadrao(estado.elenco);
+  let formacaoAtual = obterFormacao(estado.formacaoSelecionada || FORMACAO_PADRAO).id;
+  let posturaAtual = normalizarPosturaId(estado.posturaSelecionada || POSTURA_PADRAO);
+  let faseHeatmap = 'meio';
+  const inicial = prepararEscalacaoPadrao(estado.elenco, formacaoAtual);
   let titularesPorPapel = { ...inicial.titularesPorPapel };
   let papelSelecionado = null;
   let mensagemErro = '';
@@ -91,8 +88,11 @@ export function renderizarTelaEscalacao(
   const redesenhar = () => {
     container.innerHTML = '';
 
+    const papeisFormacao = obterPapeisFormacao(formacaoAtual);
     const mapaElenco = new Map(estado.elenco.map((j) => [j.id, j]));
-    const idsTitulares = new Set(Object.values(titularesPorPapel).filter(Boolean));
+    const idsTitulares = new Set(
+      papeisFormacao.map((p) => titularesPorPapel[p]).filter(Boolean),
+    );
     const reservasIds = estado.elenco
       .filter((j) => !j.lesionado && !idsTitulares.has(j.id))
       .slice(0, 7)
@@ -117,7 +117,7 @@ export function renderizarTelaEscalacao(
       el(
         'p',
         'no-subtitulo',
-        `Força do adversário: ${rival.classificacaoForca} (média ~${Math.round(rival.forcaAlvo)}) · Téc. ${nomeTec}` +
+        `Força do adversário: ${rival.classificacaoForca} (média ~${Math.round(rival.forcaAlvo)}) · Formação rival: ${rival.formacao || FORMACAO_PADRAO} · Téc. ${nomeTec}` +
           (estado.moral !== 0
             ? ` · Moral ativa: ${estado.moral > 0 ? `+${estado.moral}` : estado.moral} em todos atributos nesta partida`
             : ''),
@@ -128,7 +128,7 @@ export function renderizarTelaEscalacao(
     const btnAuto = el('button', 'btn-secundario', 'Auto-escalar melhores');
     btnAuto.type = 'button';
     btnAuto.addEventListener('click', () => {
-      const auto = prepararEscalacaoPadrao(estado.elenco);
+      const auto = prepararEscalacaoPadrao(estado.elenco, formacaoAtual);
       titularesPorPapel = { ...auto.titularesPorPapel };
       papelSelecionado = null;
       mensagemErro = '';
@@ -139,27 +139,30 @@ export function renderizarTelaEscalacao(
       'span',
       'escalacao-dica',
       papelSelecionado
-        ? `Selecionado ${ROTULOS_PAPEIS[papelSelecionado]}: toque em outro jogador ou reserva para trocar.`
-        : 'Toque em uma vaga titular e depois em um reserva (ou outro titular) para trocar.',
+        ? `Selecionado ${ROTULOS_PAPEIS[papelSelecionado] || papelSelecionado}: toque em outro jogador ou reserva para trocar.`
+        : 'Toque em uma vaga titular e depois em um reserva (ou outro titular) para trocar. Fora da posição natural: −8% nos atributos.',
     );
 
     barraAcoesTopo.append(btnAuto, dica);
 
-    const grade = el('div', 'escalacao-grade');
+    const grade = el('div', 'escalacao-grade escalacao-grade-3col');
 
-    // Coluna 1: 11 Titulares (4-3-3)
+    // Coluna 1: 11 Titulares na formação selecionada
     const colTitulares = el('div', 'escalacao-coluna');
-    colTitulares.appendChild(el('h3', 'escalacao-col-titulo', 'Titulares (4-3-3 · 11 vagas)'));
+    colTitulares.appendChild(
+      el('h3', 'escalacao-col-titulo', `Titulares (${formacaoAtual} · 11 vagas)`),
+    );
     const listaTitulares = el('div', 'escalacao-lista');
 
-    for (const papel of PAPEIS_433) {
+    for (const papel of papeisFormacao) {
       const jId = titularesPorPapel[papel];
       const j = mapaElenco.get(jId);
       const selecionado = papelSelecionado === papel;
+      const foraDePos = j ? !ehPosicaoNatural(j, papel) : false;
 
       const btn = el(
         'button',
-        `escalacao-card${selecionado ? ' selecionado' : ''}`,
+        `escalacao-card${selecionado ? ' selecionado' : ''}${foraDePos ? ' fora-posicao' : ''}`,
       );
       btn.type = 'button';
       btn.dataset.papelSlot = papel;
@@ -173,6 +176,12 @@ export function renderizarTelaEscalacao(
       btn.appendChild(topo);
 
       if (j) {
+        if (foraDePos) {
+          btn.appendChild(
+            el('div', 'escalacao-tag-fora', 'Fora da posição natural (−8% nos atributos)'),
+          );
+        }
+
         const sub = el('div', 'escalacao-card-sub');
         sub.append(
           el('span', 'escalacao-attrs', formatarResumoAttrs(j)),
@@ -195,7 +204,6 @@ export function renderizarTelaEscalacao(
         } else if (papelSelecionado === papel) {
           papelSelecionado = null;
         } else {
-          // Troca dois titulares (respeitando GOL só por GOL)
           const jA = mapaElenco.get(titularesPorPapel[papelSelecionado]);
           const jB = mapaElenco.get(titularesPorPapel[papel]);
           if (Boolean(jA?.ehGoleiro) !== Boolean(jB?.ehGoleiro)) {
@@ -285,7 +293,38 @@ export function renderizarTelaEscalacao(
     }
 
     colBanco.appendChild(listaBanco);
-    grade.append(colTitulares, colBanco);
+
+    // Coluna 3: Formação + Postura + Mapa de Calor da Pressão na Linha
+    const colTatica = el('div', 'escalacao-coluna escalacao-col-tatica');
+    renderizarPainelFormacaoHeatmap(colTatica, {
+      elenco: estado.elenco,
+      titularesPorPapel,
+      formacaoId: formacaoAtual,
+      posturaId: posturaAtual,
+      faseSelecionada: faseHeatmap,
+      moral: estado.moral || 0,
+      bonusAtributosPartida: estado.modificadoresMeta?.bonusAtributosPartida || 0,
+      onAlterarFormacao(novaFormacao) {
+        formacaoAtual = obterFormacao(novaFormacao).id;
+        estado.formacaoSelecionada = formacaoAtual;
+        const auto = prepararEscalacaoPadrao(estado.elenco, formacaoAtual);
+        titularesPorPapel = { ...auto.titularesPorPapel };
+        papelSelecionado = null;
+        mensagemErro = '';
+        redesenhar();
+      },
+      onAlterarPostura(novaPostura) {
+        posturaAtual = normalizarPosturaId(novaPostura);
+        estado.posturaSelecionada = posturaAtual;
+        redesenhar();
+      },
+      onAlterarFase(novaFase) {
+        faseHeatmap = novaFase;
+        redesenhar();
+      },
+    });
+
+    grade.append(colTitulares, colBanco, colTatica);
 
     const rodape = el('div', 'no-rodape');
     if (mensagemErro) {
@@ -304,15 +343,24 @@ export function renderizarTelaEscalacao(
     btnJogar.type = 'button';
     btnJogar.id = 'btn-entrar-em-campo';
     btnJogar.addEventListener('click', () => {
-      const check = validarEscalacao(estado.elenco, titularesPorPapel, reservasIds);
+      const check = validarEscalacao(
+        estado.elenco,
+        titularesPorPapel,
+        reservasIds,
+        formacaoAtual,
+      );
       if (!check.valido) {
         mensagemErro = check.motivo;
         redesenhar();
         return;
       }
+      estado.formacaoSelecionada = formacaoAtual;
+      estado.posturaSelecionada = posturaAtual;
       onEntrarEmCampo?.({
         titularesPorPapel,
         reservasIds: check.reservasValidas,
+        formacao: formacaoAtual,
+        postura: posturaAtual,
       });
     });
 

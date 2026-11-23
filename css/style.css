@@ -2478,6 +2478,10 @@ body[data-state='campaign_over'] #tela-no-campanha {
   gap: 14px;
 }
 
+.camp-no-cartao:has(.escalacao-grade-3col) {
+  max-width: 1280px;
+}
+
 .camp-fim-cartao {
   max-width: 680px;
   text-align: center;
@@ -3398,7 +3402,7 @@ body[data-state='campaign_over'] #tela-no-campanha {
 /* Simulador (Modo Debug) */
 .sim-controles {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
 }
 
@@ -3424,6 +3428,513 @@ body[data-state='campaign_over'] #tela-no-campanha {
   gap: 10px;
 }
 
+/* ==========================================================================
+   Formações Alternativas, Heatmap, Postura Tática e Relógio de Decisão
+   ========================================================================== */
+
+.menu-toggle-relogio {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--borda-forte);
+  background: rgba(8, 16, 12, 0.72);
+  color: var(--texto-principal);
+  text-align: left;
+  transition: border-color var(--transicao-rapida), background-color var(--transicao-rapida);
+}
+
+.menu-toggle-relogio:hover {
+  border-color: var(--acento-ouro);
+}
+
+.menu-toggle-relogio.ligado {
+  border-color: rgba(34, 197, 94, 0.52);
+  background: rgba(20, 48, 34, 0.65);
+}
+
+.toggle-relogio-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.toggle-relogio-texto strong {
+  font-size: 0.82rem;
+}
+
+.toggle-relogio-badge {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-family: var(--fonte-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.menu-toggle-relogio.ligado .toggle-relogio-badge {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.55);
+}
+
+/* Escalação em 3 colunas + Seletor de Formação/Postura + Heatmap */
+.escalacao-grade-3col {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(300px, 1.08fr);
+  align-items: start;
+}
+
+.escalacao-card.fora-posicao {
+  border-color: rgba(245, 158, 11, 0.68);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.1), var(--bg-painel-elevado));
+}
+
+.escalacao-tag-fora {
+  font-family: var(--fonte-mono);
+  font-size: 0.67rem;
+  font-weight: 700;
+  color: #fcd34d;
+}
+
+.escalacao-col-tatica {
+  gap: 12px;
+}
+
+.tatica-secao {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(8, 16, 12, 0.45);
+  border: 1px solid var(--borda-sutil);
+}
+
+.seletor-formacao-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.seletor-postura-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.btn-tatica-opcao {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--borda-forte);
+  background: var(--bg-painel-elevado);
+  color: var(--texto-principal);
+  text-align: left;
+  transition: border-color var(--transicao-rapida), background-color var(--transicao-rapida);
+}
+
+.btn-tatica-opcao:hover {
+  border-color: var(--acento-ouro);
+}
+
+.btn-tatica-opcao.selecionado {
+  border-color: var(--acento-ouro);
+  background: rgba(245, 184, 46, 0.16);
+  box-shadow: 0 0 0 1px rgba(245, 184, 46, 0.45);
+}
+
+.tatica-op-titulo {
+  font-size: 0.8rem;
+  color: var(--texto-principal);
+}
+
+.btn-tatica-opcao.selecionado .tatica-op-titulo {
+  color: #fde68a;
+}
+
+.tatica-op-sub {
+  font-size: 0.66rem;
+  line-height: 1.28;
+  color: var(--texto-secundario);
+}
+
+.heatmap-painel {
+  gap: 8px;
+}
+
+.heatmap-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.heatmap-cabecalho .escalacao-col-titulo {
+  font-size: 0.94rem;
+}
+
+.heatmap-fases-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--borda-sutil);
+}
+
+.btn-fase-heatmap {
+  padding: 4px 9px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--texto-secundario);
+  font-family: var(--fonte-mono);
+  font-size: 0.69rem;
+  font-weight: 700;
+}
+
+.btn-fase-heatmap:hover {
+  color: var(--texto-principal);
+}
+
+.btn-fase-heatmap.selecionado {
+  background: var(--acento-ouro);
+  color: #121a14;
+}
+
+.heatmap-metricas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.heatmap-pill {
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-family: var(--fonte-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--borda-sutil);
+  color: var(--texto-secundario);
+}
+
+.heatmap-pill.alerta {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fcd34d;
+}
+
+.heatmap-aviso-fora {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #fcd34d;
+}
+
+.heatmap-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border-radius: 9px;
+  background: #133824;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.heatmap-grade-15 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.heatmap-celula {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 50px;
+  padding: 4px 5px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.heatmap-celula.eh-gol {
+  min-height: 36px;
+}
+
+.heatmap-cel-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.heatmap-cel-id {
+  font-family: var(--fonte-mono);
+  font-size: 0.61rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.heatmap-cel-val {
+  font-family: var(--fonte-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.heatmap-cel-jogadores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.heatmap-jog-tag {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(147, 197, 253, 0.55);
+  color: #e0f2fe;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.heatmap-jog-tag.fora {
+  border-color: #f59e0b;
+  color: #fde68a;
+}
+
+/* HUD Postura, Relógio de Decisão e Depuração */
+.btn-postura-hud {
+  min-height: 36px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--borda-forte);
+  background: var(--bg-painel-elevado);
+  color: var(--texto-principal);
+  font-family: var(--fonte-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: border-color var(--transicao-rapida), background-color var(--transicao-rapida);
+}
+
+.btn-postura-hud:hover:not(:disabled) {
+  border-color: var(--acento-ouro);
+  background: #21382e;
+}
+
+.btn-postura-hud[data-postura='ofensiva'] {
+  border-color: rgba(248, 113, 113, 0.58);
+  color: #fecaca;
+}
+
+.btn-postura-hud[data-postura='defensiva'] {
+  border-color: rgba(96, 165, 250, 0.58);
+  color: #bfdbfe;
+}
+
+.btn-postura-hud:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.bloco-relogio-turno {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-painel);
+  border: 1px solid var(--borda-sutil);
+}
+
+.bloco-relogio-turno[data-ativo='false'] {
+  padding: 4px 10px;
+  opacity: 0.78;
+}
+
+.bloco-relogio-turno[data-faixa='atencao'] {
+  border-color: rgba(245, 158, 11, 0.62);
+}
+
+.bloco-relogio-turno[data-faixa='critico'] {
+  border-color: rgba(239, 68, 68, 0.78);
+  background: rgba(127, 29, 29, 0.25);
+}
+
+.relogio-turno-cab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.relogio-turno-texto {
+  font-family: var(--fonte-mono);
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: var(--texto-principal);
+}
+
+.relogio-turno-pausa {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  font-family: var(--fonte-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #bae6fd;
+}
+
+.relogio-turno-desconto {
+  font-family: var(--fonte-mono);
+  font-size: 0.71rem;
+  font-weight: 700;
+  color: var(--texto-secundario);
+}
+
+.relogio-turno-desconto[data-penalidade='true'] {
+  color: #fca5a5;
+}
+
+.relogio-turno-trilha {
+  width: 100%;
+  height: 5px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.bloco-relogio-turno[data-ativo='false'] .relogio-turno-trilha {
+  display: none;
+}
+
+.relogio-turno-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 99px;
+  background: #22c55e;
+  transition: width 0.1s linear, background-color var(--transicao-rapida);
+}
+
+.bloco-relogio-turno[data-faixa='atencao'] .relogio-turno-fill {
+  background: #f59e0b;
+}
+
+.bloco-relogio-turno[data-faixa='critico'] .relogio-turno-fill {
+  background: #ef4444;
+}
+
+.bloco-detalhes-calculo:focus {
+  outline: 2px solid rgba(56, 189, 248, 0.7);
+  outline-offset: 2px;
+}
+
+.cabecalho-detalhes-calculo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.cabecalho-detalhes-calculo .titulo-bloco {
+  margin: 0;
+}
+
+.acoes-detalhes-calculo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge-pausa-depuracao {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  font-family: var(--fonte-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #bae6fd;
+}
+
+.btn-mini-pausa {
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 0.68rem;
+  border: 1px solid var(--borda-sutil);
+}
+
+.btn-mini-pausa[aria-pressed='true'] {
+  border-color: rgba(56, 189, 248, 0.65);
+  background: rgba(56, 189, 248, 0.16);
+  color: #e0f2fe;
+}
+
+.lista-posturas-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.btn-postura-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--borda-forte);
+  background: var(--bg-painel-elevado);
+  color: var(--texto-principal);
+  text-align: left;
+  transition: border-color var(--transicao-rapida), background-color var(--transicao-rapida);
+}
+
+.btn-postura-modal:hover:not(:disabled) {
+  border-color: var(--acento-ouro);
+  background: #1f372c;
+}
+
+.btn-postura-modal.ativa {
+  border-color: var(--acento-ouro);
+  background: rgba(245, 184, 46, 0.14);
+}
+
+.postura-modal-tag {
+  font-family: var(--fonte-mono);
+  font-size: 0.69rem;
+  font-weight: 700;
+  color: var(--acento-ouro);
+}
+
+.chip-jogador.fora-posicao {
+  border-style: dashed;
+}
+
+@media (max-width: 1020px) {
+  .escalacao-grade-3col {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .cartao-titulo {
     padding: 18px 14px 16px;
@@ -3436,7 +3947,8 @@ body[data-state='campaign_over'] #tela-no-campanha {
   .menu-navegacao-sec,
   .meta-grade-2,
   .sim-controles,
-  .legado-resumo-detalhes {
+  .legado-resumo-detalhes,
+  .seletor-postura-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3447,5 +3959,21 @@ body[data-state='campaign_over'] #tela-no-campanha {
 
   .tela-meta {
     padding: 12px 10px 28px;
+  }
+
+  .bloco-turno-util {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .acoes-util {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .btn-postura-hud {
+    font-size: 0.66rem;
+    padding: 4px 8px;
+    min-height: 32px;
   }
 }

@@ -4,8 +4,17 @@
  * painel de ordens defensivas e "Detalhes do cálculo".
  */
 
-import { obterFaseParaTime } from '../dados/formacoes.js';
+import {
+  FATOR_ATRIBUTO_FORA_POSICAO,
+  obterFaseParaTime,
+} from '../dados/formacoes.js';
 import { TIPOS_HABILIDADE } from '../dados/habilidades.js';
+import {
+  obterConfigPostura,
+  obterTrocasPosturaRestantes,
+  podeTrocarPosturaPartida,
+  POSTURA_PADRAO,
+} from '../regras/postura.js';
 import {
   IDS_ZONAS,
   obterDistanciaZonas,
@@ -112,6 +121,7 @@ export function criarControladorCampo({
   onCancelarJogada,
   onOrdemDefensiva,
   onAbrirSubstituicao,
+  onAbrirPostura,
 }) {
   const elGradeZonas = document.getElementById('grade-zonas');
   const elSvg = document.getElementById('camada-linha-jogada');
@@ -120,6 +130,7 @@ export function criarControladorCampo({
   const elTurnoQuem = document.getElementById('turno-quem');
   const elTurnoContagem = document.getElementById('turno-contagem');
   const elSubsContagem = document.getElementById('subs-contagem');
+  const elBtnAbrirPostura = document.getElementById('btn-abrir-postura');
   const elFaseRotulo = document.getElementById('fase-atual-rotulo');
   const elAvisoBonusTurno = document.getElementById('aviso-bonus-turno');
   const elBarraConfirmacao = document.getElementById('barra-confirmacao');
@@ -140,6 +151,11 @@ export function criarControladorCampo({
 
   let ultimaPreviaDesenhada = null;
 
+  elBtnAbrirPostura?.addEventListener('click', () => {
+    if (!elBtnAbrirPostura.disabled) {
+      onAbrirPostura?.();
+    }
+  });
   elBtnFinalizar.addEventListener('click', () => onSelecionarFinalizacao());
   elBtnConfirmar.addEventListener('click', () => onConfirmarJogada());
   elBtnCancelar.addEventListener('click', () => onCancelarJogada());
@@ -185,18 +201,39 @@ export function criarControladorCampo({
 
     elSubsContagem.textContent = `Sub ${estado.substituicoes.meuTime}/${MAX_SUBSTITUICOES_PARTIDA}`;
 
+    const posturaMeu = obterConfigPostura(estado.posturas?.meuTime || POSTURA_PADRAO);
+    const posturaRival = obterConfigPostura(estado.posturas?.rival || POSTURA_PADRAO);
+
+    if (elBtnAbrirPostura) {
+      const restantesPostura = obterTrocasPosturaRestantes(estado, 'meuTime');
+      const checagemPostura = podeTrocarPosturaPartida(estado, 'meuTime');
+      elBtnAbrirPostura.textContent = `Postura: ${posturaMeu.nome} · ${restantesPostura}/2`;
+      elBtnAbrirPostura.dataset.postura = posturaMeu.id;
+      elBtnAbrirPostura.disabled = !checagemPostura.permitido || rivalPensando;
+      elBtnAbrirPostura.title = checagemPostura.permitido
+        ? `${posturaMeu.resumo} Clique para alterar (máx. 2× por partida no início do turno de ataque).`
+        : checagemPostura.motivo;
+    }
+
     const faseMeu = obterFaseParaTime(estado.zonaBola, 'meuTime');
-    elFaseRotulo.textContent = `Fase: ${ROTULOS_FASE[faseMeu]} · ${estado.times.meuTime.formacao}`;
+    elFaseRotulo.textContent = `Fase: ${ROTULOS_FASE[faseMeu]} · ${estado.times.meuTime.formacao} (${posturaMeu.nome}) · Rival: ${estado.times.rival.formacao} (${posturaRival.nome})`;
 
     const avisos = [];
     if (estado.timeComBola === 'meuTime') {
-      if (estado.bonusContraAtaqueMeu) avisos.push('Contra-ataque +10%');
+      if (estado.bonusContraAtaqueMeu) {
+        const valorCA = 10 + (posturaMeu.bonusContraAtaqueProprio || 0) + (posturaRival.bonusExtraContraAtaqueAdversario || 0);
+        avisos.push(`Contra-ataque +${valorCA}%`);
+      }
       if (estado.defesaRivalTurno?.carrinho) {
         avisos.push(
           `Rival: Carrinho (${estado.defesaRivalTurno.carrinho.jogadorNome})`,
         );
       }
     } else if (estado.timeComBola === 'rival') {
+      if (estado.bonusContraAtaqueRival) {
+        const valorCARiv = 10 + (posturaRival.bonusContraAtaqueProprio || 0) + (posturaMeu.bonusExtraContraAtaqueAdversario || 0);
+        avisos.push(`Contra-ataque rival +${valorCARiv}%`);
+      }
       if (estado.defesaTurno?.bolaParada) {
         avisos.push('Bola parada rival (+10% passe)');
       }
@@ -347,9 +384,10 @@ export function criarControladorCampo({
 
     const submeta = document.createElement('div');
     submeta.className = 'submeta-ficha';
+    const tagFora = jogador.foraDePosicao ? ' · Fora pos. −8%' : '';
     submeta.textContent = jogador.zona
-      ? `Zona: ${jogador.zona} (base: ${jogador.zonaBase}) · Efic.: ${eficiencia}%${textoCartao}`
-      : `Fora de campo${textoCartao}`;
+      ? `Zona: ${jogador.zona} (base: ${jogador.zonaBase}) · Efic.: ${eficiencia}%${tagFora}${textoCartao}`
+      : `Fora de campo${tagFora}${textoCartao}`;
 
     const linhaEstamina = document.createElement('div');
     linhaEstamina.className = 'linha-estamina-ficha';
@@ -369,11 +407,14 @@ export function criarControladorCampo({
 
     const grade = document.createElement('div');
     grade.className = 'grade-atributos';
+    const fatorTotalAttr =
+      faixaFadiga.multiplicador *
+      (jogador.foraDePosicao ? FATOR_ATRIBUTO_FORA_POSICAO : 1);
 
     for (const [chave, rotulo] of ROTULOS_ATRIBUTOS) {
       if (chave === 'defesa' && !jogador.ehGoleiro) continue;
       const baseValor = jogador.atributos[chave];
-      const efetivoValor = Math.round(baseValor * faixaFadiga.multiplicador);
+      const efetivoValor = Math.round(baseValor * fatorTotalAttr);
       const item = document.createElement('div');
       item.className = 'item-atributo';
 
@@ -382,7 +423,7 @@ export function criarControladorCampo({
 
       const num = document.createElement('strong');
       num.textContent =
-        faixaFadiga.multiplicador < 1
+        fatorTotalAttr < 1
           ? `${efetivoValor} (${baseValor})`
           : String(baseValor);
 
@@ -476,7 +517,10 @@ export function criarControladorCampo({
    * Atualiza o painel de depuração "Detalhes do cálculo":
    * tipo, base, ATAQUE, estamina/fadiga dos envolvidos, pressões, ajustes, chance final e sorteio.
    */
-  function renderizarDetalhesCalculo(estado, previaJogada) {
+  function renderizarDetalhesCalculo(estado, previaJogada, infoRelogio = null) {
+    const posturaMeuAtiva = obterConfigPostura(estado.posturas?.meuTime || POSTURA_PADRAO);
+    const posturaRivalAtiva = obterConfigPostura(estado.posturas?.rival || POSTURA_PADRAO);
+
     const fonte = previaJogada
       ? {
           ...previaJogada.calculo,
@@ -494,16 +538,60 @@ export function criarControladorCampo({
               : 'Prévia (aguardando confirmação)',
           gastosEstamina: null,
           gastosOrdem: estado.defesaTurno?.gastosOrdem || null,
+          posturaMeu: estado.posturas?.meuTime || POSTURA_PADRAO,
+          posturaRival: estado.posturas?.rival || POSTURA_PADRAO,
         }
       : estado.ultimoCalculo;
 
+    const descontoRelogio =
+      fonte && typeof fonte.descontoRelogio === 'number'
+        ? fonte.descontoRelogio
+        : estado.descontoRelogioAtual || 0;
+
+    const textoRelogio =
+      infoRelogio && !infoRelogio.ativo && descontoRelogio === 0
+        ? infoRelogio.desligadoPorOpcao
+          ? 'Desligado (Opções)'
+          : `Sem relógio (Nív. ${infoRelogio.dificuldade ?? estado.dificuldadePartida ?? 0})`
+        : descontoRelogio > 0
+          ? `−${descontoRelogio}%`
+          : '0%';
+
     if (!fonte) {
-      elDetalhesCalculo.innerHTML =
-        '<p class="texto-suave">Selecione o portador e um alvo (passe, condução ou finalização) para inspecionar tipo, base, ATAQUE, estamina/fadiga, pressões e sorteio.</p>';
+      elDetalhesCalculo.innerHTML = '';
+      const linhasIniciais = [
+        ['Postura', `${posturaMeuAtiva.nome} × ${posturaRivalAtiva.nome}`],
+        [
+          'Desconto relógio',
+          textoRelogio,
+          descontoRelogio > 0 ? 'valor-dificil' : '',
+        ],
+      ];
+      for (const [rotulo, valor, classeExtra] of linhasIniciais) {
+        const div = document.createElement('div');
+        div.className = 'linha-detalhe';
+        const r = document.createElement('span');
+        r.className = 'rotulo-detalhe';
+        r.textContent = rotulo;
+        const v = document.createElement('span');
+        v.className = `valor-detalhe ${classeExtra || ''}`.trim();
+        v.textContent = valor;
+        div.append(r, v);
+        elDetalhesCalculo.appendChild(div);
+      }
+      const p = document.createElement('p');
+      p.className = 'texto-suave';
+      p.style.marginTop = '6px';
+      p.textContent =
+        'Selecione o portador e um alvo (passe, condução ou finalização) para inspecionar tipo, base, ATAQUE, estamina/fadiga, pressões e sorteio.';
+      elDetalhesCalculo.appendChild(p);
       return;
     }
 
     const nivel = fonte.classificacao?.nivel || 'arriscado';
+    const postMeuFonte = obterConfigPostura(fonte.posturaMeu || posturaMeuAtiva.id);
+    const postRivFonte = obterConfigPostura(fonte.posturaRival || posturaRivalAtiva.id);
+
     const textoLinha =
       fonte.acao === 'passe'
         ? fonte.zonasIntermediarias && fonte.zonasIntermediarias.length > 0
@@ -518,6 +606,12 @@ export function criarControladorCampo({
 
     const linhas = [
       ['Jogada', `${fonte.origemNome} → ${fonte.destinoNome}`],
+      ['Postura', `${postMeuFonte.nome} × ${postRivFonte.nome}`],
+      [
+        'Desconto relógio',
+        textoRelogio,
+        descontoRelogio > 0 ? 'valor-dificil' : '',
+      ],
       ['Tipo', fonte.tipo?.rotulo || fonte.acao],
       ['Base', String(fonte.base)],
       [
@@ -892,6 +986,7 @@ export function criarControladorCampo({
       inspecionadoId = null,
       rivalPensando = false,
       habilidadeOfensivaModo = null,
+      infoRelogio = null,
     } = {},
   ) {
     const uni = estado.times?.meuTime?.uniforme;
@@ -911,7 +1006,7 @@ export function criarControladorCampo({
       rivalPensando,
       habilidadeOfensivaModo,
     });
-    renderizarDetalhesCalculo(estado, previaJogada);
+    renderizarDetalhesCalculo(estado, previaJogada, infoRelogio);
 
     const mapaPressaoRival = obterPressaoDefensiva(estado, 'rival');
     const portador = obterPortador(estado);
@@ -1045,6 +1140,7 @@ export function criarControladorCampo({
         btn.className = `chip-jogador ${ehMeu ? 'time-meu' : 'time-rival'}`;
         btn.dataset.jogadorId = jogador.id;
         btn.dataset.timeId = timeId;
+        if (jogador.foraDePosicao) btn.classList.add('fora-posicao');
 
         if (temBola) btn.classList.add('com-bola');
         if (temBola && ehMeu && portadorSelecionado) {
@@ -1082,17 +1178,23 @@ export function criarControladorCampo({
         const sufixoBola = temBola ? ', com a bola' : '';
         const sufixoAmarelo =
           jogador.extras?.cartoes?.amarelos > 0 ? ', com cartão amarelo' : '';
+        const sufixoFora = jogador.foraDePosicao ? ', fora de posição (−8%)' : '';
         const sufixoHabs =
           habsJogador.length > 0
             ? `, habilidades: ${habsJogador.map((h) => h.nome).join(', ')}`
             : '';
 
-        if (habsJogador.length > 0) {
-          btn.title = `Habilidades: ${habsJogador.map((h) => h.nome).join(', ')}`;
+        if (habsJogador.length > 0 || jogador.foraDePosicao) {
+          const partesTitle = [];
+          if (jogador.foraDePosicao) partesTitle.push('Fora de posição (−8%)');
+          if (habsJogador.length > 0) {
+            partesTitle.push(`Habilidades: ${habsJogador.map((h) => h.nome).join(', ')}`);
+          }
+          btn.title = partesTitle.join(' · ');
         }
         btn.setAttribute(
           'aria-label',
-          `${jogador.nomeCurto}, ${jogador.posicao}, ${nomeTime}, zona ${zonaId}, estamina ${estamina}%${sufixoBola}${sufixoAmarelo}${sufixoHabs}`,
+          `${jogador.nomeCurto}, ${jogador.posicao}, ${nomeTime}, zona ${zonaId}, estamina ${estamina}%${sufixoBola}${sufixoAmarelo}${sufixoFora}${sufixoHabs}`,
         );
 
         const topoChip = document.createElement('span');

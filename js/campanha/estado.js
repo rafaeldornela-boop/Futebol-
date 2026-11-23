@@ -3,6 +3,12 @@
  * cálculo de média inicial e gerador de adversários por camada.
  */
 
+import {
+  aplicarFormacaoNoTime,
+  FORMACAO_PADRAO,
+  POSICOES_NATURAIS_PAPEL,
+  sortearFormacaoPorSeed,
+} from '../dados/formacoes.js';
 import { TIMES_PADRAO } from '../dados/times.js';
 import { LISTA_HABILIDADES, jogadorPodeTerHabilidade } from '../dados/habilidades.js';
 import { criarInstanciaHabilidade } from '../regras/habilidades.js';
@@ -225,6 +231,7 @@ export function gerarRivalPorCamada({
   mediaInicialTitulares = 71,
   forcaPersonalizada = null,
   bonusDificuldade = 0,
+  formacao = FORMACAO_PADRAO,
 }) {
   const rng = criarRng(`${seed}::rival::${noId}::c${camada}`);
   const forcaAlvo =
@@ -233,6 +240,7 @@ export function gerarRivalPorCamada({
       : calcularForcaAlvoCamada(mediaInicialTitulares, camada, ehChefao, bonusDificuldade);
 
   const modelo = structuredClone(TIMES_PADRAO.rival);
+  aplicarFormacaoNoTime(modelo, formacao);
   const infoClube = ehChefao
     ? { nome: 'Imperador FC (Chefão)', sigla: 'IMP', cor: '#7f1d1d' }
     : NOMES_RIVAIS[Math.floor(rng() * NOMES_RIVAIS.length)];
@@ -248,11 +256,12 @@ export function gerarRivalPorCamada({
         Math.min(99, Math.round(forcaAlvo + bias + inteiroAleatorio(-variacao, variacao, rng))),
       );
 
-    const ehZagueiro = papel === 'ZAG1' || papel === 'ZAG2';
-    const ehLateral = papel === 'LAT_E' || papel === 'LAT_D';
-    const ehVol = papel === 'VOL';
-    const ehMeia = papel === 'MEI_E' || papel === 'MEI_D';
-    const ehAta = papel === 'PONTA_E' || papel === 'PONTA_D' || papel === 'CA';
+    const ehZagueiro = papel?.startsWith('ZAG');
+    const ehLateral = papel?.startsWith('LAT') || papel?.startsWith('ALA');
+    const ehVol = papel?.startsWith('VOL');
+    const ehMeia = papel?.startsWith('MEI');
+    const ehAta =
+      papel?.startsWith('PONTA') || papel?.startsWith('ATA') || papel === 'CA';
 
     return {
       passe: sortearAttr(ehMeia || ehVol ? 3 : 0),
@@ -261,7 +270,9 @@ export function gerarRivalPorCamada({
       marcacao: sortearAttr(ehZagueiro || ehVol ? 4 : ehAta ? -12 : 0),
       interceptacao: sortearAttr(ehZagueiro || ehVol ? 3 : ehAta ? -10 : 0),
       desarme: sortearAttr(ehZagueiro || ehVol ? 4 : ehAta ? -12 : 0),
-      velocidade: sortearAttr(ehLateral || papel?.startsWith('PONTA') ? 5 : 0),
+      velocidade: sortearAttr(
+        ehLateral || papel?.startsWith('PONTA') ? 5 : 0,
+      ),
       tecnica: sortearAttr(ehMeia || ehAta ? 3 : -2),
       finalizacao: sortearAttr(ehAta ? 5 : ehZagueiro ? -15 : -4),
       agressividade: sortearAttr(-8),
@@ -297,11 +308,17 @@ export function gerarRivalPorCamada({
     return escolhidas.filter(Boolean);
   };
 
-  const ajustarLista = (lista, prefixoId) =>
+  const ajustarLista = (lista, prefixoId, ehTitular) =>
     lista.map((j, idx) => {
       const { nome, nomeCurto } = sortearNome(idx);
+      const posNatural =
+        ehTitular && POSICOES_NATURAIS_PAPEL[j.papel]?.[0]
+          ? POSICOES_NATURAIS_PAPEL[j.papel][0]
+          : j.posicao;
       const novo = {
         ...j,
+        posicao: posNatural,
+        foraDePosicao: false,
         id: `${prefixoId}_${noId}_${idx}`,
         nome,
         nomeCurto,
@@ -320,13 +337,14 @@ export function gerarRivalPorCamada({
   return {
     ...modelo,
     id: 'rival',
+    formacao: modelo.formacao || formacao,
     nome: infoClube.nome,
     sigla: infoClube.sigla,
     corPrincipal: infoClube.cor,
     forcaAlvo,
     classificacaoForca: ehChefao ? 'Forte' : classificarForcaRival(forcaAlvo, mediaInicialTitulares),
-    jogadores: ajustarLista(modelo.jogadores, 'r'),
-    reservas: ajustarLista(modelo.reservas, 'rr'),
+    jogadores: ajustarLista(modelo.jogadores, 'r', true),
+    reservas: ajustarLista(modelo.reservas, 'rr', false),
     substituidos: [],
   };
 }
@@ -374,6 +392,9 @@ export function criarEstadoCampanhaBase({
     derrotasSeguidas: 0,
     moral: 0,
     contratosPatrocinio: [],
+    formacaoRival: sortearFormacaoPorSeed(`${seedFinal}::formacao_rival`),
+    formacaoSelecionada: FORMACAO_PADRAO,
+    posturaSelecionada: 'equilibrada',
     status: 'em_andamento', // 'em_andamento' | 'vitoria' | 'derrota'
     motivoFim: '',
   };

@@ -14,6 +14,7 @@ import { calcularCustoEstaminaComHabilidades } from './habilidades.js';
 export const ESTAMINA_MINIMA = 0;
 export const ESTAMINA_MAXIMA = 100;
 export const ESTAMINA_INICIAL = 100;
+export const FATOR_FORA_POSICAO = 0.92;
 
 export const FAIXAS_FADIGA = Object.freeze([
   { min: 70, multiplicador: 1.0, cor: 'verde', rotulo: 'Inteiro' },
@@ -88,13 +89,15 @@ export function obterCorEstamina(jogadorOuEstamina) {
 
 export function obterAtributoEfetivo(jogador, chave) {
   const base = jogador?.atributos?.[chave] ?? 0;
-  return base * obterMultiplicadorFadiga(jogador);
+  const fatorPosicao = jogador?.foraDePosicao ? FATOR_FORA_POSICAO : 1;
+  return base * fatorPosicao * obterMultiplicadorFadiga(jogador);
 }
 
 export function obterAtributoEfetivoComBonus(jogador, chave, bonusAtributos = null) {
   const extra = !jogador?.ehGoleiro ? bonusAtributos?.[chave] || 0 : 0;
   const base = (jogador?.atributos?.[chave] ?? 0) + extra;
-  return base * obterMultiplicadorFadiga(jogador);
+  const fatorPosicao = jogador?.foraDePosicao ? FATOR_FORA_POSICAO : 1;
+  return base * fatorPosicao * obterMultiplicadorFadiga(jogador);
 }
 
 export function formatarMultiplicador(multiplicador) {

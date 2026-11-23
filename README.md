@@ -18,18 +18,20 @@ Jogo de futebol de técnico por turnos em **HTML, CSS e JavaScript puros** (sem 
 │   │   └── nos.js          # Lógica dos 9 tipos de nó + chefão, escalação, pós-partida e mercado
 │   ├── dados/
 │   │   ├── zonas.js        # Grade 3×5 (Z1-E..Z5-D) + GK e GKR, distância, vizinhança e espelho
-│   │   ├── formacoes.js    # Formação 4-3-3 por fase (atrás, meio, frente) e balanço lateral
-│   │   ├── habilidades.js  # Catálogo declarativo das 10 habilidades especiais (nível, custo, usos, efeito)
+│   │   ├── formacoes.js    # Formações 4-3-3, 4-4-2, 3-5-2 e 4-2-3-1 por fase, −8% fora de posição
+│   │   ├── habilidades.js  # Catálogo declarativo das 10+6 habilidades especiais
 │   │   └── times.js        # Dois times fictícios (11 titulares + 7 reservas cada, estamina 100 e habilidades)
 │   ├── regras/
 │   │   ├── estamina.js     # Constantes no topo; faixas de fadiga, custo das jogadas e deslocamento
+│   │   ├── postura.js      # Posturas Defensiva, Equilibrada e Ofensiva + ajuste dinâmico do rival
+│   │   ├── relogio.js      # Relógio por dificuldade (0..5), desconto na 2ª metade e timeout
 │   │   ├── habilidades.js  # Motor de modificadores de habilidades ativas e passivas
 │   │   ├── calculo.js      # Constantes no topo; eficiência, pressão dupla, passes, condução e chute
 │   │   ├── defesa.js       # Ordens defensivas por estamina, fallback por eficiência, falta tática e contra-ataque
 │   │   ├── substituicao.js # Até 5 trocas/partida (1/turno sem gastar turno) e auto-troca do rival (<30 est.)
 │   │   └── partida.js      # Motor da partida + função encapsulada partida(meuTime, rival, opcoes)
 │   ├── debug/
-│   │   └── simulacao.js    # Ferramenta de equilíbrio (200 partidas automáticas com IA dos dois lados)
+│   │   └── simulacao.js    # Ferramenta de equilíbrio (200 partidas com formação/postura configuráveis)
 │   ├── meta/
 │   │   ├── constantes.js   # Custos de melhorias, uniformes, clubes, técnicos, pacotes e 5 conquistas
 │   │   ├── melhorias.js    # Compra de níveis (0–5) do Clube e compra/equipe de uniformes
@@ -40,8 +42,10 @@ Jogo de futebol de técnico por turnos em **HTML, CSS e JavaScript puros** (sem 
 │   └── ui/
 │       ├── campo.js        # Renderização vertical, chips com uniforme/estamina/habilidades, linha SVG e cálculo
 │       ├── clube.js        # Tela do Clube (melhorias, uniformes, desbloqueios e backup JSON)
+│       ├── formacao.js     # Seletor de formação/postura + mapa de calor da pressão na linha na escalação
 │       ├── mapa.js         # Mapa vertical em 12 camadas com arestas SVG, força do rival e HUD
-│       ├── menu.js         # Menu inicial (clube, técnico, dificuldade 0–5, seed e navegação)
+│       ├── menu.js         # Menu inicial (clube, técnico, dificuldade 0–5, seed e opções de relógio)
+│       ├── relogio.js      # Cronômetro visual de turno com pausa automática em modais e depuração
 │       ├── telas.js        # Escalação, Treino, Mercado (incl. Base), Patrocínio, Eventos e Fim de Campanha
 │       └── trofeus.js      # Sala de Troféus e painel das 5 Conquistas
 └── README.md               # Documentação do projeto
@@ -77,7 +81,7 @@ Todo efeito permanente entre campanhas passa exclusivamente por `modificadoresMe
   - **Técnicos**: `Clássico` (grátis), `Motivador` (15 pts: `+2` atributos na partida), `Negociador` (20 pts: compras `−15%`, vendas `+10%`) e `Fisiologista` (25 pts: `+5` estamina entre nós).
   - **Pacotes de conteúdo** (20 pts cada): 2 pacotes com 3 habilidades novas cada e 2 pacotes com 3 eventos novos cada.
 - **Sala de Troféus e Backup JSON**: registra campanhas vencidas (clube, técnico, dificuldade, seed e placar da final), 5 conquistas e exportação/importação manual em JSON (além de `localStorage` protegido em `try/catch`).
-- **Ferramenta de Equilíbrio (Modo Debug)**: acessível pelo menu inicial, roda 200 partidas automáticas com a IA nos dois lados exibindo `%` vitórias/empates/derrotas, média de gols e média de estamina final.
+- **Ferramenta de Equilíbrio (Modo Debug)**: acessível pelo menu inicial, roda 200 partidas automáticas com a IA nos dois lados permitindo escolher formação e postura de ambos os times, exibindo `%` vitórias/empates/derrotas, média de gols e média de estamina final.
 
 ## Modo Campanha
 
@@ -89,11 +93,16 @@ Todo efeito permanente entre campanhas passa exclusivamente por `modificadoresMe
 ## Núcleo da Partida
 
 - **Campo Vertical (17 zonas)**: `GK` embaixo (faixa 0), grade `3 × 5` (`Z1-E` a `Z5-D`, faixas 1 a 5) e `GKR` no topo (faixa 6). Distância calculada pela maior diferença entre faixa e corredor, com vizinhança inclusive diagonal.
-- **Formação 4-3-3 por fase**: os times se reposicionam no início de cada turno conforme a fase da bola (`ATRÁS`, `MEIO`, `FRENTE`), mantendo balanço defensivo (o lateral oposto ao da bola não passa da faixa 2).
+- **Formações (`4-3-3`, `4-4-2`, `3-5-2`, `4-2-3-1`) e Mapa de Calor**: na tela de escalação, escolha a formação e visualize ao lado o mapa de calor da pressão na linha de passe do seu time por fase (`Atrás`, `Meio`, `Frente`). Jogadores escalados fora da posição natural sofrem `−8%` em todos os atributos. O rival sorteia uma das 4 formações com peso igual no início da campanha.
+- **Postura Tática (`Defensiva`, `Equilibrada`, `Ofensiva`)**: escolhida antes da partida e alterável até `2` vezes por partida no início do seu turno de ataque sem gastar o turno:
+  - `Ofensiva`: nas fases `MEIO` e `FRENTE`, jogadores de linha (exceto `ZAG1`) sobem 1 faixa (até 5), passes para frente e longo ganham `+4%`, deslocamento custa `×1,5` e o contra-ataque adversário recebe `+10%` extra (`20%`).
+  - `Defensiva`: nas fases `MEIO` e `FRENTE`, jogadores de linha (exceto atacantes centrais) recuam 1 faixa (até 1), passe para frente perde `−4%`, pressão na linha é `×1,10` e o próprio contra-ataque ganha `+5%` (`15%`).
+  - O rival ajusta dinamicamente sua postura nos últimos 3 turnos conforme o placar.
+- **Relógio de Decisão (`relogio.js`)**: desligado no nível 0; `30s` (níveis 1–2), `20s` (níveis 3–4) e `12s` (nível 5) — opcionalmente desativável no menu Opções ou no menu de pausa. Na segunda metade do tempo, a chance cai `−1%` por segundo até `−10%`. Se o tempo acabar no ataque, o rival rouba a bola; na defesa, aplica `Manter marcação`. O relógio pausa automaticamente em modais e ao inspecionar o painel `Detalhes do cálculo`.
 - **Estamina e Fadiga (`estamina.js`)**: jogadores começam com 100 (sem recuperação na partida). A fadiga multiplica **todos** os atributos usados nos cálculos (`70–100: ×1,00 | 40–69: ×0,92 | 20–39: ×0,82 | <20: ×0,70`).
   - **Custo das jogadas**: passe curto/trás/lateral (`2`/`1`), frente (`3`/`2`), longo/invertido (`5`/`3`), conduzir (`6`), finalizar (`6`) e deslocamento de zona-base no turno (`1` por faixa mudada).
 - **Pressão Dupla (0–100)**:
-  - **No portador**: força `desarme × 0,6 + marcação × 0,4` (já com multiplicador de fadiga).
+  - **No portador**: força `desarme × 0,6 + marcação × 0,4` (já com multiplicador de fadiga e posição).
   - **Na linha de passe**: força `interceptação × 0,6 + marcação × 0,4` (pinta as zonas de vermelho).
 - **Defesa Interativa por Estamina**: no turno do rival, ele anuncia origem → destino, tipo e chance; cada ordem mostra o custo e quem vai gastar (com fallback automático por maior eficiência):
   - `Pressionar o portador` (−10 est. nos 2 maiores na bola) · `Fechar linha de passe` (−6 est. nos 2 maiores no destino) · `Recuar o bloco` (custo só de deslocamento) · `Falta tática` (−8 est. no maior na bola, risco de amarelo/vermelho) · `Manter marcação` (0 est.).
@@ -102,4 +111,4 @@ Todo efeito permanente entre campanhas passa exclusivamente por `modificadoresMe
   - **Defensivas ativas** (1 uso, ordens no turno do rival): `Carrinho cirúrgico` (pressão no portador ×2 sem risco de falta, custo 10) e `Voo` (+15 na defesa do goleiro em finalização, custo 10).
   - **Passivas**: `Leitura de jogo` (+10% força de interceptação), `Saída de bola` (+10% passes do goleiro), `Passe de primeira` (+5% passes curtos/laterais), `Liderança` (+3 posicionamento ao time em campo) e `Fôlego` (−20% custos de estamina do jogador), além de 6 habilidades dos pacotes desbloqueáveis.
 - **Substituições (`substituicao.js`)**: 7 reservas por time (`1 GOL, 2 DEF, 2 MEI, 2 ATA`), até 5 trocas na partida e 1 por turno (sem gastar o turno). O reserva herda a vaga, goleiro só troca por goleiro, e o rival troca automaticamente quem ficar abaixo de 30 de estamina.
-- **Contra-ataque**: recuperar a bola por desarme ou interceptação quando o rival estava na fase `FRENTE` concede `+10%` na sua primeira jogada.
+- **Contra-ataque**: recuperar a bola por desarme ou interceptação quando o rival estava na fase `FRENTE` concede `+10%` na sua primeira jogada (somado aos bônus de postura tática).

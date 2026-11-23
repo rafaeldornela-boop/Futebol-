@@ -8,7 +8,10 @@
  * - Orquestrar ordens defensivas contra o rival, recálculo (< 35%) e contra-ataques
  */
 
-import { aplicarMovimentoDeTurno } from '../dados/formacoes.js';
+import {
+  aplicarMovimentoDeTurno,
+  obterFaseParaTime,
+} from '../dados/formacoes.js';
 import { clonarTimesPadrao } from '../dados/times.js';
 import {
   obterCorredor,
@@ -56,6 +59,13 @@ import {
   executarSubstituicao,
   verificarSubstituicaoAutomaticaRival,
 } from './substituicao.js';
+import {
+  decidirPosturaDinamicaRival,
+  normalizarPosturaId,
+  obterConfigPostura,
+  podeTrocarPosturaPartida,
+  POSTURA_PADRAO,
+} from './postura.js';
 
 export const TURNOS_POR_LADO = 10;
 
@@ -112,6 +122,8 @@ export function sincronizarPosicoesTurno(
     estado.timeComBola === 'rival' ? estado.defesaTurno?.deslocamentoMeuTime || 0 : 0;
 
   const reducaoMeta = estado.modificadoresMeta?.reducaoCustoEstamina || 0;
+  const posturaMeu = estado.posturas?.meuTime || POSTURA_PADRAO;
+  const posturaRival = estado.posturas?.rival || POSTURA_PADRAO;
 
   aplicarMovimentoDeTurno(
     meu,
@@ -120,7 +132,11 @@ export function sincronizarPosicoesTurno(
     portadorMeu,
     meu.formacao,
     deslocamentoMeu,
-    { cobrarDeslocamento: cobrarDeslocamento && cobrarMeu, reducaoMeta },
+    {
+      cobrarDeslocamento: cobrarDeslocamento && cobrarMeu,
+      reducaoMeta,
+      posturaId: posturaMeu,
+    },
   );
   aplicarMovimentoDeTurno(
     rival,
@@ -129,7 +145,11 @@ export function sincronizarPosicoesTurno(
     portadorRival,
     rival.formacao,
     0,
-    { cobrarDeslocamento: cobrarDeslocamento && cobrarRival, reducaoMeta: 0 },
+    {
+      cobrarDeslocamento: cobrarDeslocamento && cobrarRival,
+      reducaoMeta: 0,
+      posturaId: posturaRival,
+    },
   );
 }
 
@@ -146,9 +166,17 @@ export function criarPartida(timesPersonalizados = null, opcoes = {}) {
     timesPersonalizados?.meuTime?.modificadoresMeta ||
     null;
 
+  const posturaMeu = normalizarPosturaId(
+    opcoes?.posturaMeu || times?.meuTime?.postura,
+  );
+  const posturaRival = normalizarPosturaId(
+    opcoes?.posturaRival || times?.rival?.postura,
+  );
+
   const estado = {
     times,
     modificadoresMeta: modsMeta ? structuredClone(modsMeta) : null,
+    dificuldadePartida: opcoes?.dificuldade ?? modsMeta?.dificuldade ?? 0,
     participantesMeuIds: new Set((times.meuTime.jogadores || []).map((j) => j.id)),
     placar: { meuTime: 0, rival: 0 },
     turnosMaximosPorLado: TURNOS_POR_LADO,
@@ -156,11 +184,25 @@ export function criarPartida(timesPersonalizados = null, opcoes = {}) {
     substituicoes: { meuTime: 0, rival: 0 },
     substituicaoNoTurno: { meuTime: false, rival: false },
     ultimaSubstituicaoRival: null,
+    posturas: {
+      meuTime: posturaMeu,
+      rival: posturaRival,
+    },
+    trocasPostura: {
+      meuTime: 0,
+      rival: 0,
+    },
+    posturaTrocadaNoTurno: {
+      meuTime: false,
+      rival: false,
+    },
+    descontoRelogioAtual: 0,
     timeComBola: 'meuTime',
     portadorId: zagueiroInicial.id,
     zonaBola: 'Z1-C',
     encerrada: false,
     bonusContraAtaqueMeu: false,
+    bonusContraAtaqueRival: false,
     bonusProximaJogadaRival: 0,
     defesaTurno: null,
     defesaRivalTurno: null,
@@ -627,7 +669,9 @@ function concluirTurno(
   estado.defesaTurno = null;
   estado.defesaRivalTurno = null;
   estado.substituicaoNoTurno = { meuTime: false, rival: false };
+  estado.posturaTrocadaNoTurno = { meuTime: false, rival: false };
   estado.ultimaSubstituicaoRival = null;
+  estado.descontoRelogioAtual = 0;
 
   // Se houve subida temporária por "Pressionar o portador", restaura a zonaBase natural
   // antes de calcular o deslocamento do novo turno para não cobrar dobra de retorno.
@@ -663,6 +707,21 @@ function concluirTurno(
   estado.timeComBola = timeEscolhido;
   estado.zonaBola = zonaEscolhida;
   estado.portadorId = portadorEscolhido;
+
+  // Nos últimos 3 turnos do rival, ajusta sua postura dinamicamente conforme o placar
+  if (estado.timeComBola === 'rival') {
+    const turnosRestantesRival = limite - estado.turnosJogados.rival;
+    const posturaDesejada = decidirPosturaDinamicaRival({
+      turnosRestantesRival,
+      golsRival: estado.placar.rival,
+      golsMeu: estado.placar.meuTime,
+      posturaAtual: estado.posturas?.rival || POSTURA_PADRAO,
+    });
+    if (estado.posturas) {
+      estado.posturas.rival = posturaDesejada;
+    }
+  }
+
   sincronizarPosicoesTurno(estado, { cobrarDeslocamento: true });
 
   if (estado.timeComBola === 'rival') {
@@ -984,6 +1043,140 @@ export function fazerSubstituicao(estado, timeId, jogadorSaiId, jogadorEntraId) 
 }
 
 /**
+ * Altera a postura tática do time no início do turno de ataque, sem gastar o turno
+ * (máximo de 2 trocas por partida).
+ */
+export function trocarPosturaNaPartida(estado, novaPostura, timeId = 'meuTime') {
+  const checagem = podeTrocarPosturaPartida(estado, timeId, novaPostura);
+  if (!checagem.permitido) {
+    return { valido: false, motivo: checagem.motivo };
+  }
+
+  const posturaFinal = normalizarPosturaId(novaPostura);
+  if (!estado.posturas) {
+    estado.posturas = { meuTime: POSTURA_PADRAO, rival: POSTURA_PADRAO };
+  }
+  if (!estado.trocasPostura) {
+    estado.trocasPostura = { meuTime: 0, rival: 0 };
+  }
+  if (!estado.posturaTrocadaNoTurno) {
+    estado.posturaTrocadaNoTurno = { meuTime: false, rival: false };
+  }
+
+  estado.posturas[timeId] = posturaFinal;
+  estado.trocasPostura[timeId] += 1;
+  estado.posturaTrocadaNoTurno[timeId] = true;
+
+  sincronizarPosicoesTurno(estado, {
+    cobrarDeslocamento: true,
+    cobrarMeu: timeId === 'meuTime',
+    cobrarRival: timeId === 'rival',
+  });
+
+  const cfg = obterConfigPostura(posturaFinal);
+  const restantes = Math.max(0, 2 - estado.trocasPostura[timeId]);
+  const texto = `Postura ajustada para ${cfg.nome} (${restantes} troca(s) restante(s) na partida).`;
+  estado.ultimaJogada = {
+    tipo: 'ordem',
+    time: timeId,
+    texto,
+  };
+
+  return {
+    valido: true,
+    postura: posturaFinal,
+    restantes,
+    texto,
+  };
+}
+
+/**
+ * Resolve o estouro do relógio de decisão no turno de ataque do usuário:
+ * o rival rouba a bola por demora na zona atual, consumindo o turno do usuário.
+ */
+export function aplicarEstourouRelogioAtaque(estado) {
+  if (!estado || estado.encerrada || estado.timeComBola !== 'meuTime') {
+    return { valido: false, motivo: 'Relógio de ataque não aplicável neste momento.' };
+  }
+
+  const portador = obterPortador(estado);
+  const zonaAtual = estado.zonaBola;
+  const descontoAplicado = estado.descontoRelogioAtual || 0;
+
+  estado.bonusContraAtaqueMeu = false;
+  estado.descontoRelogioAtual = 0;
+  estado.turnosJogados.meuTime += 1;
+
+  const ladrao = escolherInterceptadorNaZona(estado.times.rival, zonaAtual);
+  estado.estatisticas.rival.interceptacoes += 1;
+
+  const ativouContraAtaque = verificarAtivacaoContraAtaque(
+    { zonaBola: zonaAtual },
+    'desarme',
+    'rival',
+  );
+  if (ativouContraAtaque) {
+    estado.bonusContraAtaqueRival = true;
+  }
+
+  const resultado = {
+    tipo: 'interceptacao',
+    acao: 'tempo',
+    time: 'meuTime',
+    sorteio: null,
+    chance: 0,
+    desfecho: 'Roubo por demora (tempo esgotado)',
+    texto: `Tempo esgotado! ${ladrao.nomeCurto} aproveitou a demora de ${portador?.nomeCurto || 'seu time'} e roubou a bola em ${zonaAtual}.`,
+  };
+
+  estado.ultimoCalculo = {
+    acao: 'tempo',
+    tipo: { id: 'tempo', rotulo: 'Tempo esgotado', base: 0, peso: 0 },
+    origemNome: portador?.nomeCurto || 'Portador',
+    destinoNome: ladrao.nomeCurto,
+    zonaOrigem: zonaAtual,
+    zonaDestino: zonaAtual,
+    base: 0,
+    ataque: 0,
+    pressaoPortadorOrigem: 0,
+    pressaoDestino: 0,
+    pressaoTotal: 0,
+    peso: 0,
+    ajustesChance:
+      descontoAplicado > 0
+        ? [{ rotulo: 'Desconto relógio', valor: -descontoAplicado }]
+        : [],
+    descontoRelogio: descontoAplicado,
+    posturaMeu: estado.posturas?.meuTime || POSTURA_PADRAO,
+    posturaRival: estado.posturas?.rival || POSTURA_PADRAO,
+    habilidadesAplicadas: [],
+    chance: 0,
+    sorteio: null,
+    desfecho: resultado.desfecho,
+    gastosEstamina: [],
+    gastosOrdem: [],
+  };
+
+  concluirTurno(estado, 'rival', zonaAtual, ladrao.id);
+
+  if (estado.encerrada) {
+    resultado.fimDeJogo = true;
+  }
+  estado.ultimaJogada = resultado;
+  estado.historico.unshift(resultado);
+  if (estado.historico.length > 25) {
+    estado.historico.pop();
+  }
+
+  return {
+    valido: true,
+    resultado,
+    estado,
+    ativouContraAtaque,
+  };
+}
+
+/**
  * Executa uma jogada previamente avaliada (`passe`, `conduzir` ou `finalizar`).
  */
 export function executarJogada(
@@ -1028,10 +1221,15 @@ export function executarJogada(
   const carrinhoRivalTurno =
     idAtacante === 'meuTime' ? estado.defesaRivalTurno?.carrinho || null : null;
 
+  const descontoRelogioTurno =
+    idAtacante === 'meuTime' ? estado.descontoRelogioAtual || 0 : 0;
+
   // Consome bônus de jogada única que já foram aplicados neste cálculo
   if (idAtacante === 'meuTime') {
     estado.bonusContraAtaqueMeu = false;
+    estado.descontoRelogioAtual = 0;
   } else {
+    estado.bonusContraAtaqueRival = false;
     estado.bonusProximaJogadaRival = 0;
   }
 
@@ -1101,7 +1299,10 @@ export function executarJogada(
         'interceptacao',
         idDefensor,
       );
-      if (ativouContraAtaque) estado.bonusContraAtaqueMeu = true;
+      if (ativouContraAtaque) {
+        if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+        else estado.bonusContraAtaqueRival = true;
+      }
       resultado = {
         tipo: 'interceptacao',
         acao,
@@ -1109,7 +1310,7 @@ export function executarJogada(
         sorteio,
         chance,
         desfecho: 'Interceptação',
-        texto: `${prefixoHab}${interceptador.nomeCurto} interceptou o passe de ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque (+10% na próxima jogada)!' : ''}`,
+        texto: `${prefixoHab}${interceptador.nomeCurto} interceptou o passe de ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado na próxima jogada!' : ''}`,
       };
       concluirTurno(estado, idDefensor, zonaDestino, interceptador.id, rngHabilidade);
     }
@@ -1152,7 +1353,10 @@ export function executarJogada(
         'desarme',
         idDefensor,
       );
-      if (ativouContraAtaque) estado.bonusContraAtaqueMeu = true;
+      if (ativouContraAtaque) {
+        if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+        else estado.bonusContraAtaqueRival = true;
+      }
       resultado = {
         tipo: 'interceptacao',
         acao,
@@ -1160,7 +1364,7 @@ export function executarJogada(
         sorteio,
         chance,
         desfecho: 'Desarme',
-        texto: `${prefixoHab}${desarmador.nomeCurto} desarmou ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque (+10% na próxima jogada)!' : ''}`,
+        texto: `${prefixoHab}${desarmador.nomeCurto} desarmou ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado na próxima jogada!' : ''}`,
       };
       concluirTurno(estado, idDefensor, zonaDestino, desarmador.id, rngHabilidade);
     }
@@ -1245,6 +1449,9 @@ export function executarJogada(
     zonaDestino,
     sorteio,
     desfecho: resultado.desfecho,
+    descontoRelogio: descontoRelogioTurno,
+    posturaMeu: estado.posturas?.meuTime || POSTURA_PADRAO,
+    posturaRival: estado.posturas?.rival || POSTURA_PADRAO,
     gastosEstamina: gastosEstamina.map((g) => ({
       nome: g.jogador.nomeCurto,
       papel: g.papel,
@@ -1391,7 +1598,12 @@ export function compilarResultadoPartida(estado, opcoes = {}) {
 export async function partida(meuTime, rival, opcoes = {}) {
   const estado = criarPartida(
     { meuTime, rival },
-    { modificadoresMeta: opcoes.modificadoresMeta || meuTime?.modificadoresMeta || null },
+    {
+      modificadoresMeta: opcoes.modificadoresMeta || meuTime?.modificadoresMeta || null,
+      posturaMeu: opcoes.posturaMeu || meuTime?.postura,
+      posturaRival: opcoes.posturaRival || rival?.postura,
+      dificuldade: opcoes.dificuldade,
+    },
   );
 
   if (typeof opcoes.iniciarPartidaUI === 'function' && !opcoes.simular) {

@@ -49,6 +49,9 @@ export function criarEstadoMetaInicial() {
     pacotesDesbloqueados: [],
     trofeus: [],
     conquistasDesbloqueadas: [],
+    opcoes: {
+      relogioDesligado: false,
+    },
   };
 }
 
@@ -133,6 +136,9 @@ export function normalizarEstadoMeta(bruto) {
     pacotesDesbloqueados: pacotesDesb,
     trofeus,
     conquistasDesbloqueadas: conquistas,
+    opcoes: {
+      relogioDesligado: Boolean(bruto.opcoes?.relogioDesligado),
+    },
   };
 }
 
@@ -157,6 +163,20 @@ export function salvarMeta(meta, storage = globalThis?.localStorage) {
   } catch {
     return false;
   }
+}
+
+export function alternarRelogioMeta(
+  meta,
+  forcarValor = null,
+  storage = globalThis?.localStorage,
+) {
+  if (!meta) return false;
+  if (!meta.opcoes) meta.opcoes = { relogioDesligado: false };
+  const novoValor =
+    typeof forcarValor === 'boolean' ? forcarValor : !meta.opcoes.relogioDesligado;
+  meta.opcoes.relogioDesligado = novoValor;
+  salvarMeta(meta, storage);
+  return novoValor;
 }
 
 export function exportarMetaJson(meta) {
@@ -340,6 +360,10 @@ export function modificadoresMeta(metaEstado = null, opcoes = {}) {
 
     pacotesDesbloqueados,
     habilidadesDisponiveisIds: habilidadesDisponiveis.map((h) => h.id),
+    relogioDesligado:
+      typeof opcoes?.relogioDesligado === 'boolean'
+        ? opcoes.relogioDesligado
+        : Boolean(meta.opcoes?.relogioDesligado),
   });
 }
 

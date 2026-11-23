@@ -13,7 +13,15 @@ import {
   jogadorPodeTerHabilidade,
   obterHabilidadesDisponiveis,
 } from '../dados/habilidades.js';
-import { PAPEIS_433 } from '../dados/formacoes.js';
+import {
+  ehPosicaoNatural,
+  FORMACAO_PADRAO,
+  obterFormacao,
+  obterPapeisFormacao,
+  POSICOES_PREFERIDAS_PAPEL,
+  SETOR_DO_PAPEL,
+} from '../dados/formacoes.js';
+import { POSTURA_PADRAO } from '../regras/postura.js';
 import { modificadoresMeta } from '../meta/meta.js';
 import { criarInstanciaHabilidade } from '../regras/habilidades.js';
 import { CAMPANHA_CONFIG, TIPOS_NO } from './constantes.js';
@@ -34,34 +42,6 @@ export function obterModsCampanha(estado) {
   return estado?.modificadoresMeta || modificadoresMeta();
 }
 
-const POSICOES_PREFERIDAS_PAPEL = Object.freeze({
-  GOL: ['GOL'],
-  ZAG1: ['ZAG'],
-  ZAG2: ['ZAG'],
-  LAT_E: ['LE', 'LD'],
-  LAT_D: ['LD', 'LE'],
-  VOL: ['VOL', 'ME', 'MD'],
-  MEI_E: ['ME', 'MD', 'VOL'],
-  MEI_D: ['MD', 'ME', 'VOL'],
-  PONTA_E: ['PE', 'PD', 'CA'],
-  PONTA_D: ['PD', 'PE', 'CA'],
-  CA: ['CA', 'PE', 'PD'],
-});
-
-const SETOR_DO_PAPEL = Object.freeze({
-  GOL: 'GOL',
-  ZAG1: 'DEF',
-  ZAG2: 'DEF',
-  LAT_E: 'DEF',
-  LAT_D: 'DEF',
-  VOL: 'MEI',
-  MEI_E: 'MEI',
-  MEI_D: 'MEI',
-  PONTA_E: 'ATA',
-  PONTA_D: 'ATA',
-  CA: 'ATA',
-});
-
 const NOMES_MERCADO_P = Object.freeze([
   'Breno', 'Cauã', 'Diego', 'Enzo', 'Fabrício', 'Gerson', 'Hugo', 'Ícaro',
   'Jonas', 'Kevin', 'Leandro', 'Mateus', 'Nathan', 'Orlando', 'Pedro', 'Rodrigo',
@@ -74,7 +54,7 @@ const NOMES_MERCADO_S = Object.freeze([
 ]);
 
 /**
- * Pontua um jogador saudável do elenco para preencher determinado papel do 4-3-3.
+ * Pontua um jogador saudável do elenco para preencher determinado papel da formação.
  */
 function pontuarJogadorParaPapel(jogador, papel) {
   if (!jogador || jogador.lesionado) return -1e9;
@@ -85,9 +65,13 @@ function pontuarJogadorParaPapel(jogador, papel) {
   const media = calcularMediaJogador(jogador);
   const preferidas = POSICOES_PREFERIDAS_PAPEL[papel] || [];
   let bonusPos = 0;
-  if (preferidas[0] === jogador.posicao) bonusPos = 35;
-  else if (preferidas.includes(jogador.posicao)) bonusPos = 22;
-  else if (jogador.setor === SETOR_DO_PAPEL[papel]) bonusPos = 14;
+  if (ehPosicaoNatural(jogador, papel)) {
+    bonusPos = preferidas[0] === jogador.posicao ? 55 : 46;
+  } else if (preferidas.includes(jogador.posicao)) {
+    bonusPos = 24;
+  } else if (jogador.setor === SETOR_DO_PAPEL[papel]) {
+    bonusPos = 12;
+  }
 
   const pesoEstamina = est * 0.25;
   return bonusPos + media + pesoEstamina;
@@ -95,14 +79,15 @@ function pontuarJogadorParaPapel(jogador, papel) {
 
 /**
  * Seleciona automaticamente os 11 melhores jogadores disponíveis (não lesionados)
- * respeitando as posições do 4-3-3, mais até 7 reservas saudáveis.
+ * respeitando as posições da formação informada, mais até 7 reservas saudáveis.
  */
-export function prepararEscalacaoPadrao(elenco) {
+export function prepararEscalacaoPadrao(elenco, idFormacao = FORMACAO_PADRAO) {
   const saudaveis = (elenco || []).filter((j) => !j.lesionado);
+  const papeis = obterPapeisFormacao(idFormacao);
   const usados = new Set();
   const titularesPorPapel = {};
 
-  for (const papel of PAPEIS_433) {
+  for (const papel of papeis) {
     const candidatos = saudaveis
       .filter((j) => !usados.has(j.id))
       .sort((a, b) => pontuarJogadorParaPapel(b, papel) - pontuarJogadorParaPapel(a, papel));
@@ -126,14 +111,20 @@ export function prepararEscalacaoPadrao(elenco) {
 }
 
 /**
- * Valida a escalação para entrar em campo.
+ * Valida a escalação para entrar em campo na formação informada.
  */
-export function validarEscalacao(elenco, titularesPorPapel, reservasIds = []) {
+export function validarEscalacao(
+  elenco,
+  titularesPorPapel,
+  reservasIds = [],
+  idFormacao = FORMACAO_PADRAO,
+) {
   const mapaElenco = new Map((elenco || []).map((j) => [j.id, j]));
+  const papeis = obterPapeisFormacao(idFormacao);
   const idsTitulares = [];
   const vistos = new Set();
 
-  for (const papel of PAPEIS_433) {
+  for (const papel of papeis) {
     const id = titularesPorPapel?.[papel];
     const jogador = mapaElenco.get(id);
     if (!jogador) {
@@ -173,9 +164,15 @@ export function validarEscalacao(elenco, titularesPorPapel, reservasIds = []) {
 
 /**
  * Monta o objeto `meuTime` pronto para `partida(meuTime, rival, opcoes)` aplicando
- * a escalação escolhida e o bônus de moral em todos os atributos (sem mutar `estado.elenco`).
+ * formação, postura, status de posição natural e moral em todos os atributos.
  */
-export function montarTimeParaPartida(estado, titularesPorPapel, reservasIds) {
+export function montarTimeParaPartida(
+  estado,
+  titularesPorPapel,
+  reservasIds,
+  { formacao = FORMACAO_PADRAO, postura = POSTURA_PADRAO } = {},
+) {
+  const formacaoObj = obterFormacao(formacao);
   const mapaElenco = new Map(estado.elenco.map((j) => [j.id, j]));
   const mods = obterModsCampanha(estado);
   const moral = estado.moral || 0;
@@ -186,6 +183,7 @@ export function montarTimeParaPartida(estado, titularesPorPapel, reservasIds) {
     clone.papel = papel;
     clone.ehReserva = ehReserva;
     clone.iniciaComBola = papel === 'ZAG1';
+    clone.foraDePosicao = ehReserva ? false : !ehPosicaoNatural(clone, papel);
     clone.zona = ehReserva ? null : clone.ehGoleiro ? 'GK' : 'Z1-C';
     clone.zonaBase = ehReserva ? null : clone.ehGoleiro ? 'GK' : 'Z1-C';
     clone.extras = {
@@ -208,7 +206,7 @@ export function montarTimeParaPartida(estado, titularesPorPapel, reservasIds) {
     return clone;
   };
 
-  const jogadores = PAPEIS_433.map((papel) =>
+  const jogadores = formacaoObj.papeis.map((papel) =>
     prepararJogador(mapaElenco.get(titularesPorPapel[papel]), papel, false),
   );
 
@@ -222,7 +220,8 @@ export function montarTimeParaPartida(estado, titularesPorPapel, reservasIds) {
     id: 'meuTime',
     nome: mods.clubeNome || estado.clubeNome || 'Atlético Brisa',
     sigla: mods.clubeSigla || estado.clubeSigla || 'BRI',
-    formacao: '4-3-3',
+    formacao: formacaoObj.id,
+    postura,
     corPrincipal: mods.uniforme?.corPrincipal || '#163a76',
     corBorda: mods.uniforme?.corBorda || '#93c5fd',
     corDetalhe: mods.uniforme?.corDetalhe || '#f5b82e',
