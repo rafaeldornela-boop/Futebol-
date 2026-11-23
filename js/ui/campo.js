@@ -5,10 +5,14 @@
  */
 
 import {
-  FATOR_ATRIBUTO_FORA_POSICAO,
   obterFaseParaTime,
 } from '../dados/formacoes.js';
 import { TIPOS_HABILIDADE } from '../dados/habilidades.js';
+import {
+  avaliarFamiliaridadePosicao,
+  obterAtributoMental,
+} from '../jogador/identidade.js';
+import { classificarPotencialOlheiro } from '../jogador/desenvolvimento.js';
 import {
   obterConfigPostura,
   obterTrocasPosturaRestantes,
@@ -25,7 +29,6 @@ import {
   saoZonasVizinhos,
   ZONAS,
 } from '../dados/zonas.js';
-import { calcularEficienciaNaZona } from '../regras/calculo.js';
 import { avaliarCustoOrdemDefensiva } from '../regras/defesa.js';
 import {
   formatarMultiplicador,
@@ -51,6 +54,15 @@ import {
   MAX_SUBSTITUICOES_PARTIDA,
   podeSubstituir,
 } from '../regras/substituicao.js';
+import {
+  classificarAtributoQualitativo,
+  classificarNivelJogador,
+  classificarOportunidadeJogada,
+  classificarPressaoQualitativa,
+  classificarRiscoCartao,
+  criarIndicadorOportunidadeDOM,
+  formatarPeDominante,
+} from './apresentacao.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -63,7 +75,7 @@ const ROTULOS_ATRIBUTOS = [
   ['desarme', 'Desarme'],
   ['velocidade', 'Velocidade'],
   ['tecnica', 'Técnica'],
-  ['dibre', 'Dibre'],
+  ['dibre', 'Drible'],
   ['finalizacao', 'Finalização'],
   ['agressividade', 'Agressivid.'],
   ['defesa', 'Defesa'],
@@ -73,9 +85,13 @@ const ROTULOS_TIPO_JOGADA = {
   inicio: 'Início',
   acerto: 'Passe Certo',
   conducao: 'Condução',
-  dibre: 'Dibre!',
+  dibre: 'Drible!',
   gol: 'Gol!',
   defesa: 'Defesa',
+  trave: 'Na Trave!',
+  bloqueio: 'Bloqueio!',
+  rebote: 'Rebote!',
+  disputa: 'Dividida',
   lateral: 'Lateral',
   escanteio: 'Escanteio',
   penalti: 'Pênalti!',
@@ -248,30 +264,26 @@ export function criarControladorCampo({
 
     if (estado.timeComBola === 'meuTime') {
       if (impetoMeu > 0) {
-        avisos.push(`🔥 Ímpeto +${impetoMeu * 3}%`);
+        avisos.push(impetoMeu >= 2 ? '🔥 Time embalado' : '🔥 Bom momento');
       }
       if (estado.bonusDibre?.meuTime) {
-        avisos.push('⚡ Marcador batido (+12% e −50% pressão)');
+        avisos.push('⚡ Marcador batido (espaço livre)');
       }
       if (estado.bonusCruzamento?.meuTime) {
-        avisos.push('🎯 Passe da linha de fundo (+15% chute)');
+        avisos.push('🎯 Passe da linha de fundo (área aberta)');
       }
       if (estado.bolaParadaContexto?.time === 'meuTime') {
         const tipoBP = estado.bolaParadaContexto.tipo;
         if (tipoBP === 'penalti') {
-          avisos.push('⚠️ PÊNALTI! Cobrança direta (base 76%)');
+          avisos.push('⚠️ PÊNALTI! Cobrança da marca da cal');
         } else if (tipoBP === 'escanteio') {
-          avisos.push('🚩 ESCANTEIO (+12% cruzar / +15% curto)');
+          avisos.push('🚩 ESCANTEIO (cruzamento ou jogada curta)');
         } else if (tipoBP === 'falta_ofensiva') {
-          avisos.push('🎯 FALTA PERIGOSA (Chute direto ou +12% passe)');
+          avisos.push('🎯 FALTA PERIGOSA (chute direto ou jogada ensaiada)');
         }
       }
       if (estado.bonusContraAtaqueMeu) {
-        const valorCA =
-          10 +
-          (posturaMeu.bonusContraAtaqueProprio || 0) +
-          (posturaRival.bonusExtraContraAtaqueAdversario || 0);
-        avisos.push(`Contra-ataque +${valorCA}%`);
+        avisos.push('⚡ Contra-ataque aberto');
       }
       if (estado.defesaRivalTurno?.carrinho) {
         avisos.push(
@@ -280,10 +292,10 @@ export function criarControladorCampo({
       }
     } else if (estado.timeComBola === 'rival') {
       if (impetoRival > 0) {
-        avisos.push(`🔥 Ímpeto rival +${impetoRival * 3}%`);
+        avisos.push('🔥 Rival embalado');
       }
       if (estado.bonusDibre?.rival) {
-        avisos.push('⚡ Rival driblou (+12%)');
+        avisos.push('⚡ Rival limpou a marcação');
       }
       if (estado.bolaParadaContexto?.time === 'rival') {
         const tipoBP = estado.bolaParadaContexto.tipo;
@@ -292,17 +304,13 @@ export function criarControladorCampo({
         else if (tipoBP === 'falta_ofensiva') avisos.push('🎯 Falta rival');
       }
       if (estado.bonusContraAtaqueRival) {
-        const valorCARiv =
-          10 +
-          (posturaRival.bonusContraAtaqueProprio || 0) +
-          (posturaMeu.bonusExtraContraAtaqueAdversario || 0);
-        avisos.push(`Contra-ataque rival +${valorCARiv}%`);
+        avisos.push('⚡ Contra-ataque rival');
       }
       if (estado.defesaTurno?.bolaParada) {
-        avisos.push('Bola parada rival (+10% passe)');
+        avisos.push('Bola parada rival');
       }
       if (estado.bonusProximaJogadaRival > 0) {
-        avisos.push(`Rival +${estado.bonusProximaJogadaRival}% (espaço)`);
+        avisos.push('Rival com espaço no ataque');
       }
     }
 
@@ -346,12 +354,15 @@ export function criarControladorCampo({
     elDefesaIntencaoResumo.innerHTML =
       `${avisoSubRival}` +
       `Intenção do rival: <strong>${intencao.passador.nomeCurto} (${intencao.zonaOrigem}) → ${destinoNome}</strong> · ` +
-      `${intencao.calculo.tipo.rotulo} · <strong>${intencao.calculo.chance}%</strong>`;
+      `${intencao.calculo.tipo.rotulo} `;
+    elDefesaIntencaoResumo.appendChild(
+      criarIndicadorOportunidadeDOM(intencao.calculo.chance, { compacto: true }),
+    );
 
     const marcador = defesa.marcadorFalta;
     if (marcador) {
       elDescFaltaTatica.textContent =
-        `Interrompe e rival reinicia com bola parada (+10% em passes). Amarelo (${marcador.nomeCurto}): ${defesa.chanceAmarelo}%.`;
+        `Interrompe o lance e o rival reinicia com bola parada. ${classificarRiscoCartao(defesa.chanceAmarelo)} (${marcador.nomeCurto}).`;
     }
 
     for (const btn of botoesOrdem) {
@@ -414,13 +425,17 @@ export function criarControladorCampo({
   function renderizarFichaJogador(jogador, timeId, estado, rivalPensando) {
     if (!jogador) {
       elFichaJogador.innerHTML =
-        '<p class="texto-suave">Toque em qualquer chip para ver atributos, estamina e substituir.</p>';
+        '<p class="texto-suave">Toque em qualquer chip para ver perfil, estamina e substituir.</p>';
       return;
     }
 
     elFichaJogador.innerHTML = '';
 
     const nomeTime = estado.times[timeId].nome;
+    const nivelJogador = classificarNivelJogador(jogador, jogador.papel || null);
+    const fam = avaliarFamiliaridadePosicao(jogador, jogador.papel || jogador.posicao);
+    const potOlheiro = classificarPotencialOlheiro(jogador);
+
     const cabecalho = document.createElement('div');
     cabecalho.className = 'cabecalho-ficha';
 
@@ -434,9 +449,6 @@ export function criarControladorCampo({
 
     cabecalho.append(elNome, elMeta);
 
-    const eficiencia = jogador.zona
-      ? Math.round(calcularEficienciaNaZona(jogador, jogador.zona) * 100)
-      : 0;
     const estamina = obterEstamina(jogador);
     const faixaFadiga = obterFaixaFadiga(estamina);
     const cartoes = jogador.extras?.cartoes;
@@ -446,19 +458,36 @@ export function criarControladorCampo({
         ? ` · ${cartoes.amarelos} amarelo`
         : '';
 
+    const linhaIdentidade = document.createElement('div');
+    linhaIdentidade.className = 'ficha-identidade-tags';
+
+    const tagNivel = document.createElement('span');
+    tagNivel.className = `badge-qualitativo nivel-${nivelJogador.nivelCor}`;
+    tagNivel.textContent = `Nível: ${nivelJogador.rotulo}`;
+
+    const tagFam = document.createElement('span');
+    tagFam.className = `badge-familiaridade fam-${fam.id || 'natural'}`;
+    tagFam.textContent = fam.rotulo;
+
+    const tagPot = document.createElement('span');
+    tagPot.className = 'badge-potencial';
+    tagPot.textContent = potOlheiro.rotulo;
+
+    linhaIdentidade.append(tagNivel, tagFam, tagPot);
+
     const submeta = document.createElement('div');
     submeta.className = 'submeta-ficha';
-    const tagFora = jogador.foraDePosicao ? ' · Fora pos. −8%' : '';
+    const infoIdadePe = `${jogador.idade ?? 24} anos · ${formatarPeDominante(jogador)}`;
     submeta.textContent = jogador.zona
-      ? `Zona: ${jogador.zona} (base: ${jogador.zonaBase}) · Efic.: ${eficiencia}%${tagFora}${textoCartao}`
-      : `Fora de campo${tagFora}${textoCartao}`;
+      ? `${infoIdadePe} · Zona ${jogador.zona} (base ${jogador.zonaBase})${textoCartao}`
+      : `${infoIdadePe} · Fora de campo${textoCartao}`;
 
     const linhaEstamina = document.createElement('div');
     linhaEstamina.className = 'linha-estamina-ficha';
 
     const txtEstamina = document.createElement('span');
     txtEstamina.className = `texto-estamina-ficha nivel-${faixaFadiga.cor}`;
-    txtEstamina.textContent = `Estamina: ${estamina}/100 · Fadiga ${formatarMultiplicador(faixaFadiga.multiplicador)} (${faixaFadiga.rotulo})`;
+    txtEstamina.textContent = `Condição física: ${faixaFadiga.rotulo} (${estamina}%)`;
 
     const trilhaEst = document.createElement('div');
     trilhaEst.className = 'trilha-estamina-ficha';
@@ -471,31 +500,48 @@ export function criarControladorCampo({
 
     const grade = document.createElement('div');
     grade.className = 'grade-atributos';
-    const fatorTotalAttr =
-      faixaFadiga.multiplicador *
-      (jogador.foraDePosicao ? FATOR_ATRIBUTO_FORA_POSICAO : 1);
+    const fatorTotalAttr = faixaFadiga.multiplicador * (fam.fatorAtributo ?? 1);
 
     for (const [chave, rotulo] of ROTULOS_ATRIBUTOS) {
       if (chave === 'defesa' && !jogador.ehGoleiro) continue;
       const baseValor = jogador.atributos[chave];
       const efetivoValor = Math.round(baseValor * fatorTotalAttr);
+      const faixaBase = classificarAtributoQualitativo(baseValor);
+      const faixaEfetiva = classificarAtributoQualitativo(efetivoValor);
+      const caiuFaixa = faixaEfetiva.min < faixaBase.min;
+
       const item = document.createElement('div');
       item.className = 'item-atributo';
 
       const lbl = document.createElement('span');
       lbl.textContent = rotulo;
 
-      const num = document.createElement('strong');
-      num.textContent =
-        fatorTotalAttr < 1
-          ? `${efetivoValor} (${baseValor})`
-          : String(baseValor);
+      const badge = document.createElement('span');
+      badge.className = `badge-qualitativo compacto nivel-${faixaEfetiva.nivelCor}`;
+      badge.textContent = caiuFaixa ? `${faixaEfetiva.curto} ↓` : faixaEfetiva.curto;
+      badge.title = caiuFaixa
+        ? `${rotulo}: ${faixaEfetiva.rotulo} no momento (habitual: ${faixaBase.rotulo})`
+        : `${rotulo}: ${faixaEfetiva.rotulo}`;
 
-      item.append(lbl, num);
+      item.append(lbl, badge);
       grade.appendChild(item);
     }
 
-    elFichaJogador.append(cabecalho, submeta, linhaEstamina, grade);
+    // Camada mental (Concentração)
+    const valorConc = obterAtributoMental(jogador, 'concentracao');
+    const faixaConc = classificarAtributoQualitativo(valorConc);
+    const itemConc = document.createElement('div');
+    itemConc.className = 'item-atributo';
+    const lblConc = document.createElement('span');
+    lblConc.textContent = 'Concentração';
+    const badgeConc = document.createElement('span');
+    badgeConc.className = `badge-qualitativo compacto nivel-${faixaConc.nivelCor}`;
+    badgeConc.textContent = faixaConc.curto;
+    badgeConc.title = `Concentração: ${faixaConc.rotulo} (atua sob pressão, fadiga e lances decisivos)`;
+    itemConc.append(lblConc, badgeConc);
+    grade.appendChild(itemConc);
+
+    elFichaJogador.append(cabecalho, linhaIdentidade, submeta, linhaEstamina, grade);
 
     const habilidades = obterHabilidadesJogador(jogador);
     const blocoHabs = document.createElement('div');
@@ -710,6 +756,31 @@ export function criarControladorCampo({
       linhas.push(['Ajustes', resumoAjustes]);
     }
 
+    if (fonte.contextoPasse?.rotuloContextual) {
+      linhas.push(['Contexto passe', fonte.contextoPasse.rotuloContextual]);
+    }
+    if (fonte.contextoPe?.detalhe) {
+      const ajPe = fonte.contextoPe.ajusteChance || 0;
+      const sufixoPe = ajPe !== 0 ? ` (${ajPe > 0 ? '+' : ''}${ajPe}%)` : '';
+      linhas.push(['Pé dominante', `${fonte.contextoPe.detalhe}${sufixoPe}`]);
+    }
+    if (fonte.impactoConcentracao?.motivo) {
+      const ajConc = fonte.impactoConcentracao.ajusteChance || 0;
+      const sufixoConc = ajConc !== 0 ? ` (${ajConc > 0 ? '+' : ''}${ajConc}%)` : '';
+      linhas.push(['Concentração', `${fonte.impactoConcentracao.motivo}${sufixoConc}`]);
+    }
+    const famOrigem =
+      fonte.familiaridadePassador ||
+      fonte.familiaridadePortador ||
+      fonte.familiaridadeAtacante ||
+      null;
+    if (famOrigem?.rotulo) {
+      linhas.push([
+        'Familiaridade',
+        `${famOrigem.rotulo} (×${(famOrigem.fatorAtributo ?? 1).toFixed(2)})`,
+      ]);
+    }
+
     const habsLista = fonte.habilidadesAplicadas || [];
     linhas.push([
       'Habilidades',
@@ -721,6 +792,16 @@ export function criarControladorCampo({
       'Sorteio (1–100)',
       fonte.sorteio !== null ? `${fonte.sorteio} → ${fonte.desfecho}` : fonte.desfecho,
     ]);
+
+    if (fonte.desfechoTecnico) {
+      linhas.push(['Desfecho técnico', fonte.desfechoTecnico]);
+    }
+    if (fonte.disputa?.vencedor) {
+      linhas.push([
+        'Disputa bola',
+        `${fonte.disputa.vencedor.nomeCurto} (${fonte.disputa.vencedorLado}, atq ${fonte.disputa.chanceAtaque}%, rol. ${fonte.disputa.rolagem})`,
+      ]);
+    }
 
     if (fonte.gastosEstamina && fonte.gastosEstamina.length > 0) {
       const resumoGastos = fonte.gastosEstamina
@@ -799,7 +880,7 @@ export function criarControladorCampo({
       if (hab.efeito?.tipo === 'finalizacao_faixas' && info.aplicavel) {
         const prevChute = avaliarFinalizacao(estado, { habilidadeId: hab.id });
         if (prevChute) {
-          chanceTexto = ` · ${prevChute.calculo.chance}%`;
+          chanceTexto = ` · ${classificarOportunidadeJogada(prevChute.calculo.chance).curto}`;
         } else {
           temAlvoValido = false;
         }
@@ -891,20 +972,20 @@ export function criarControladorCampo({
 
     if (elBtnFinalizar) {
       if (bpTipo === 'penalti') {
-        elBtnFinalizar.textContent = `Cobrar Pênalti (${previaChuteDisponivel?.calculo?.chance ?? 76}%)`;
+        elBtnFinalizar.textContent = 'Cobrar Pênalti';
       } else if (
         bpTipo === 'falta_ofensiva' &&
         portador &&
         !podeFinalizarNaZona(portador.zona, 'meuTime')
       ) {
-        elBtnFinalizar.textContent = `Cobrar Falta Direta (${previaChuteDisponivel?.calculo?.chance ?? 28}%)`;
+        elBtnFinalizar.textContent = 'Cobrar Falta Direta';
       } else {
         elBtnFinalizar.textContent = 'Finalizar ao Gol';
       }
     }
 
     if (elBtnCruzar && previaCruzamentoDisponivel) {
-      elBtnCruzar.textContent = `Cruzar na Área (${previaCruzamentoDisponivel.calculo.chance}%)`;
+      elBtnCruzar.textContent = 'Cruzar na Área';
     }
 
     renderizarHabilidadesPortador(estado, portador, {
@@ -922,20 +1003,20 @@ export function criarControladorCampo({
       elBarraConfirmacao.dataset.ativo = 'true';
 
       if (previaJogada.acao === 'passe') {
-        elResumoInline.innerHTML = `${tagHab}<strong>${previaJogada.passador.nomeCurto} → ${previaJogada.receptor.nomeCurto}</strong> · ${c.tipo.rotulo} · <strong>${c.chance}%</strong>`;
+        elResumoInline.innerHTML = `${tagHab}<strong>${previaJogada.passador.nomeCurto} → ${previaJogada.receptor.nomeCurto}</strong> · ${c.tipo.rotulo} `;
         elBtnConfirmar.textContent = 'Confirmar Passe';
       } else if (previaJogada.acao === 'conduzir') {
-        elResumoInline.innerHTML = `${tagHab}<strong>${previaJogada.passador.nomeCurto}</strong> conduzir até <strong>${previaJogada.zonaDestino}</strong> · <strong>${c.chance}%</strong>`;
+        elResumoInline.innerHTML = `${tagHab}<strong>${previaJogada.passador.nomeCurto}</strong> conduzir até <strong>${previaJogada.zonaDestino}</strong> `;
         elBtnConfirmar.textContent = 'Confirmar Condução';
       } else if (previaJogada.acao === 'dibrar') {
         const alvoTxt =
           previaJogada.zonaDestino === previaJogada.zonaOrigem
             ? `em ${previaJogada.zonaDestino} (limpar marcação)`
             : `avançando p/ ${previaJogada.zonaDestino}`;
-        elResumoInline.innerHTML = `<strong>${previaJogada.passador.nomeCurto}</strong> · ${c.tipo.rotulo} ${alvoTxt} · <strong>${c.chance}%</strong>`;
-        elBtnConfirmar.textContent = 'Confirmar Dibre';
+        elResumoInline.innerHTML = `<strong>${previaJogada.passador.nomeCurto}</strong> · ${c.tipo.rotulo} ${alvoTxt} `;
+        elBtnConfirmar.textContent = 'Confirmar Drible';
       } else if (previaJogada.acao === 'cruzar') {
-        elResumoInline.innerHTML = `<strong>${previaJogada.passador.nomeCurto} ⤳ ${previaJogada.receptor?.nomeCurto || 'Área'}</strong> · ${c.tipo.rotulo} · Gol <strong>${c.chance}%</strong>`;
+        elResumoInline.innerHTML = `<strong>${previaJogada.passador.nomeCurto} ⤳ ${previaJogada.receptor?.nomeCurto || 'Área'}</strong> · ${c.tipo.rotulo} `;
         elBtnConfirmar.textContent = 'Confirmar Cruzamento';
       } else {
         const rotuloChute =
@@ -944,7 +1025,7 @@ export function criarControladorCampo({
             : c.modoBolaParada === 'falta_direta'
               ? 'Cobrar Falta Direta'
               : `finalizar de ${previaJogada.zonaOrigem}`;
-        elResumoInline.innerHTML = `${tagHab}<strong>${previaJogada.passador.nomeCurto}</strong> · ${rotuloChute} · Gol <strong>${c.chance}%</strong>`;
+        elResumoInline.innerHTML = `${tagHab}<strong>${previaJogada.passador.nomeCurto}</strong> · ${rotuloChute} `;
         elBtnConfirmar.textContent =
           c.modoBolaParada === 'penalti'
             ? 'Bater Pênalti'
@@ -952,6 +1033,8 @@ export function criarControladorCampo({
               ? 'Bater Falta'
               : 'Confirmar Finalização';
       }
+
+      elResumoInline.appendChild(criarIndicadorOportunidadeDOM(c.chance));
 
       if (elSeletorTipoChute) {
         const mostrarSeletorChute =
@@ -989,19 +1072,22 @@ export function criarControladorCampo({
       const intencao = estado.defesaTurno?.intencaoAtual;
       if (estado.defesaTurno?.fase === 'aguardando_ordem' && intencao) {
         const dest = intencao.receptor ? intencao.receptor.nomeCurto : intencao.zonaDestino;
-        elResumoInline.innerHTML = `Rival anuncia: <strong>${intencao.passador.nomeCurto} → ${dest}</strong> (${intencao.calculo.tipo.rotulo}, <strong>${intencao.calculo.chance}%</strong>). Escolha uma ordem defensiva.`;
+        elResumoInline.innerHTML = `Rival anuncia: <strong>${intencao.passador.nomeCurto} → ${dest}</strong> (${intencao.calculo.tipo.rotulo}) `;
+        elResumoInline.appendChild(
+          criarIndicadorOportunidadeDOM(intencao.calculo.chance, { compacto: true }),
+        );
       } else if (intencao) {
         const dest = intencao.receptor ? intencao.receptor.nomeCurto : intencao.zonaDestino;
-        elResumoInline.innerHTML = `Rival executa: <strong>${intencao.passador.nomeCurto} → ${dest}</strong> (${intencao.calculo.chance}%)...`;
+        elResumoInline.innerHTML = `Rival executa: <strong>${intencao.passador.nomeCurto} → ${dest}</strong>...`;
       } else {
         elResumoInline.textContent = `${estado.times?.rival?.nome || 'Rival'} está com a bola...`;
       }
     } else if (bpTipo === 'penalti' && portador) {
       elResumoInline.innerHTML = `<strong>⚠️ PÊNALTI (${portador.nomeCurto})</strong>: clique em <strong>Cobrar Pênalti</strong> para finalizar da marca da cal!`;
     } else if (bpTipo === 'escanteio' && portador) {
-      elResumoInline.innerHTML = `<strong>🚩 ESCANTEIO (${portador.nomeCurto})</strong>: escolha <strong>Cruzar na Área (+12%)</strong> ou toque curto para um companheiro (+15%).`;
+      elResumoInline.innerHTML = `<strong>🚩 ESCANTEIO (${portador.nomeCurto})</strong>: escolha <strong>Cruzar na Área</strong> ou toque curto para um companheiro.`;
     } else if (bpTipo === 'falta_ofensiva' && portador) {
-      elResumoInline.innerHTML = `<strong>🎯 FALTA PERIGOSA (${portador.nomeCurto})</strong>: bata direto ao gol ou execute jogada ensaiada (+12% passe/cruzamento).`;
+      elResumoInline.innerHTML = `<strong>🎯 FALTA PERIGOSA (${portador.nomeCurto})</strong>: bata direto ao gol ou execute jogada ensaiada.`;
     } else if (habilidadeOfensivaModo === 'arrancada' && portador) {
       elResumoInline.innerHTML = `<strong>Arrancada ativa (${portador.nomeCurto})</strong>: toque em uma zona a <strong>2 casas</strong> destacada no campo.`;
     } else if (habilidadeOfensivaModo === 'passe_infiltracao' && portador) {
@@ -1126,8 +1212,13 @@ export function criarControladorCampo({
         ? Math.min(y1, y2) - 24
         : (y1 + y2) / 2 - (dist < 110 ? 26 : 0);
     const rotuloTipo = previa.calculo.tipo.rotulo;
-    const larguraPlaca = Math.max(88, rotuloTipo.length * 6.4 + 18);
-    const alturaPlaca = 34;
+    const oportunidade = classificarOportunidadeJogada(chance);
+    const rotuloOportunidade = oportunidade.curto;
+    const larguraPlaca = Math.max(
+      104,
+      Math.max(rotuloTipo.length, rotuloOportunidade.length) * 6.8 + 22,
+    );
+    const alturaPlaca = 36;
 
     const grupo = document.createElementNS(SVG_NS, 'g');
     const rect = document.createElementNS(SVG_NS, 'rect');
@@ -1151,7 +1242,7 @@ export function criarControladorCampo({
     txtPorc.setAttribute('x', String(mx));
     txtPorc.setAttribute('y', String(my + 8));
     txtPorc.setAttribute('class', 'placa-porcentagem-valor');
-    txtPorc.textContent = `${chance}%`;
+    txtPorc.textContent = rotuloOportunidade;
     grupo.appendChild(txtPorc);
 
     elSvg.appendChild(grupo);
@@ -1169,7 +1260,7 @@ export function criarControladorCampo({
           ? { texto: '⚽ GOL DE CABEÇA!', classe: 'callout-gol', campoClasse: 'efeito-gol-campo' }
           : { texto: '⚽ GOLAAAÇO!', classe: 'callout-gol', campoClasse: 'efeito-gol-campo' },
       dibre: {
-        texto: '✨ DIBROU! (+12%)',
+        texto: '✨ DRIBLOU!',
         classe: 'callout-dibre',
         campoClasse: 'efeito-dibre-campo',
       },
@@ -1184,7 +1275,22 @@ export function criarControladorCampo({
         campoClasse: 'efeito-shake-leve',
       },
       rebote: {
-        texto: '🔥 REBOTE NA ÁREA! (+16%)',
+        texto: '🔥 REBOTE NA ÁREA!',
+        classe: 'callout-escanteio',
+        campoClasse: 'efeito-shake-leve',
+      },
+      trave: {
+        texto: '🥅 NA TRAVE!',
+        classe: 'callout-penalti',
+        campoClasse: 'efeito-shake-campo',
+      },
+      bloqueio: {
+        texto: '🛡️ BLOQUEIO!',
+        classe: 'callout-desarme',
+        campoClasse: 'efeito-shake-leve',
+      },
+      disputa: {
+        texto: '⚔️ BOLA DIVIDIDA!',
         classe: 'callout-escanteio',
         campoClasse: 'efeito-shake-leve',
       },
@@ -1462,10 +1568,12 @@ export function criarControladorCampo({
       titulo.className = 'titulo-zona';
       titulo.textContent = infoZona.nome;
 
+      const pressaoQual = classificarPressaoQualitativa(pressaoLinha);
+      const pressaoPortQual = classificarPressaoQualitativa(pressaoPortador);
       const lblPressao = document.createElement('span');
       lblPressao.className = 'valor-pressao-zona';
-      lblPressao.textContent = `P ${pressaoLinha}%`;
-      lblPressao.title = `Pressão rival em ${zonaId} — Linha: ${pressaoLinha}% | Portador: ${pressaoPortador}%`;
+      lblPressao.textContent = pressaoQual.curto;
+      lblPressao.title = `Pressão rival em ${zonaId} — Linha: ${pressaoQual.rotulo} | No portador: ${pressaoPortQual.rotulo}`;
 
       cabecalho.append(titulo, lblPressao);
       box.appendChild(cabecalho);
@@ -1532,7 +1640,8 @@ export function criarControladorCampo({
         const sufixoBola = temBola ? ', com a bola' : '';
         const sufixoAmarelo =
           jogador.extras?.cartoes?.amarelos > 0 ? ', com cartão amarelo' : '';
-        const sufixoFora = jogador.foraDePosicao ? ', fora de posição (−8%)' : '';
+        const famChip = avaliarFamiliaridadePosicao(jogador, jogador.papel || jogador.posicao);
+        const sufixoFora = jogador.foraDePosicao ? `, ${famChip.rotulo.toLowerCase()}` : '';
         const sufixoHabs =
           habsJogador.length > 0
             ? `, habilidades: ${habsJogador.map((h) => h.nome).join(', ')}`
@@ -1540,10 +1649,11 @@ export function criarControladorCampo({
 
         const partesTitle = [];
         if (chancePreviewPasse !== null) {
-          partesTitle.push(`Passe: ${chancePreviewPasse}%`);
-          btn.dataset.chancePreview = `${chancePreviewPasse}%`;
+          const opPasse = classificarOportunidadeJogada(chancePreviewPasse);
+          partesTitle.push(`Passe: ${opPasse.rotulo}`);
+          btn.dataset.oportunidadePreview = opPasse.id;
         }
-        if (jogador.foraDePosicao) partesTitle.push('Fora de posição (−8%)');
+        if (jogador.foraDePosicao) partesTitle.push(famChip.rotulo);
         if (habsJogador.length > 0) {
           partesTitle.push(`Habilidades: ${habsJogador.map((h) => h.nome).join(', ')}`);
         }
@@ -1623,13 +1733,13 @@ export function criarControladorCampo({
         barraAcoesZona.appendChild(btnAcaoZona);
       } else if (ehVizinhaConduzivel) {
         const prevCond = avaliarConducao(estado, zonaId);
+        const opCond = prevCond ? classificarOportunidadeJogada(prevCond.calculo.chance) : null;
         const btnAcaoZona = document.createElement('button');
         btnAcaoZona.type = 'button';
-        btnAcaoZona.className = 'btn-acao-zona';
+        btnAcaoZona.className = `btn-acao-zona${opCond ? ` nivel-op-${opCond.nivel}` : ''}`;
         btnAcaoZona.dataset.acaoZona = zonaId;
-        btnAcaoZona.textContent = prevCond
-          ? `Conduzir ${prevCond.calculo.chance}%`
-          : 'Conduzir';
+        btnAcaoZona.textContent = 'Conduzir';
+        if (opCond) btnAcaoZona.title = `Conduzir até ${zonaId} · ${opCond.rotulo}`;
         btnAcaoZona.setAttribute('aria-label', `Conduzir bola para ${zonaId}`);
         btnAcaoZona.addEventListener('click', (evento) => {
           evento.stopPropagation();
@@ -1640,11 +1750,13 @@ export function criarControladorCampo({
         if (!portador.ehGoleiro) {
           const prevDib = avaliarDibre(estado, zonaId);
           if (prevDib) {
+            const opDib = classificarOportunidadeJogada(prevDib.calculo.chance);
             const btnDibreZona = document.createElement('button');
             btnDibreZona.type = 'button';
-            btnDibreZona.className = 'btn-acao-zona btn-acao-dibre';
+            btnDibreZona.className = `btn-acao-zona btn-acao-dibre nivel-op-${opDib.nivel}`;
             btnDibreZona.dataset.dibreZona = zonaId;
-            btnDibreZona.textContent = `Dibrar ${prevDib.calculo.chance}%`;
+            btnDibreZona.textContent = 'Dibrar';
+            btnDibreZona.title = `Dibrar avançando para ${zonaId} · ${opDib.rotulo}`;
             btnDibreZona.setAttribute('aria-label', `Dibrar para ${zonaId}`);
             btnDibreZona.addEventListener('click', (evento) => {
               evento.stopPropagation();
@@ -1656,11 +1768,13 @@ export function criarControladorCampo({
       } else if (ehPropriaZonaDibravel) {
         const prevDibLocal = avaliarDibre(estado, zonaId);
         if (prevDibLocal) {
+          const opDibLoc = classificarOportunidadeJogada(prevDibLocal.calculo.chance);
           const btnDibreAqui = document.createElement('button');
           btnDibreAqui.type = 'button';
-          btnDibreAqui.className = 'btn-acao-zona btn-acao-dibre';
+          btnDibreAqui.className = `btn-acao-zona btn-acao-dibre nivel-op-${opDibLoc.nivel}`;
           btnDibreAqui.dataset.dibreZona = zonaId;
-          btnDibreAqui.textContent = `Dibrar aqui ${prevDibLocal.calculo.chance}%`;
+          btnDibreAqui.textContent = 'Dibrar aqui';
+          btnDibreAqui.title = `Dibrar marcador em ${zonaId} · ${opDibLoc.rotulo}`;
           btnDibreAqui.setAttribute('aria-label', `Dibrar marcador em ${zonaId}`);
           btnDibreAqui.addEventListener('click', (evento) => {
             evento.stopPropagation();
@@ -1670,13 +1784,13 @@ export function criarControladorCampo({
         }
       } else if (ehGolAlvo) {
         const prevFin = avaliarFinalizacao(estado);
+        const opFin = prevFin ? classificarOportunidadeJogada(prevFin.calculo.chance) : null;
         const btnAcaoZona = document.createElement('button');
         btnAcaoZona.type = 'button';
-        btnAcaoZona.className = 'btn-acao-zona btn-acao-chute';
+        btnAcaoZona.className = `btn-acao-zona btn-acao-chute${opFin ? ` nivel-op-${opFin.nivel}` : ''}`;
         btnAcaoZona.dataset.acaoZona = zonaId;
-        btnAcaoZona.textContent = prevFin
-          ? `Chutar ${prevFin.calculo.chance}%`
-          : 'Chutar';
+        btnAcaoZona.textContent = 'Chutar';
+        if (opFin) btnAcaoZona.title = `Finalizar ao gol · ${opFin.rotulo}`;
         btnAcaoZona.setAttribute('aria-label', 'Finalizar ao gol');
         btnAcaoZona.addEventListener('click', (evento) => {
           evento.stopPropagation();
@@ -1696,11 +1810,13 @@ export function criarControladorCampo({
         for (const { jogador: alvoCruz } of alvosNaZona) {
           const prevCruz = avaliarCruzamento(estado, alvoCruz.id);
           if (prevCruz) {
+            const opCruz = classificarOportunidadeJogada(prevCruz.calculo.chance);
             const btnCruzZona = document.createElement('button');
             btnCruzZona.type = 'button';
-            btnCruzZona.className = 'btn-acao-zona btn-acao-cruzar';
+            btnCruzZona.className = `btn-acao-zona btn-acao-cruzar nivel-op-${opCruz.nivel}`;
             btnCruzZona.dataset.cruzarReceptor = alvoCruz.id;
-            btnCruzZona.textContent = `Cruzar (${alvoCruz.nomeCurto} ${prevCruz.calculo.chance}%)`;
+            btnCruzZona.textContent = `Cruzar (${alvoCruz.nomeCurto})`;
+            btnCruzZona.title = `Cruzar na área para ${alvoCruz.nomeCurto} · ${opCruz.rotulo}`;
             btnCruzZona.setAttribute(
               'aria-label',
               `Cruzar na área para ${alvoCruz.nomeCurto}`,

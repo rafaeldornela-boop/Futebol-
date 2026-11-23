@@ -173,9 +173,9 @@
         <div class="sim-controles">
           <div class="sim-campo">
             <label for="sim-forca-rival" class="titulo-seed-label">
-              Força do rival: <strong id="sim-forca-valor" class="num-tabular">71</strong>
+              Força do rival: <strong id="sim-forca-valor" class="num-tabular">46</strong>
             </label>
-            <input id="sim-forca-rival" type="range" min="55" max="92" step="1" value="71" class="sim-range" />
+            <input id="sim-forca-rival" type="range" min="30" max="88" step="1" value="46" class="sim-range" />
           </div>
 
           <div class="sim-campo">
@@ -544,7 +544,7 @@
 
         <div class="rotulo-direcao-campo rotulo-direcao-base">
           <span>Sua Defesa (GK)</span>
-          <span id="aviso-bonus-turno" class="aviso-bonus-turno" hidden>Contra-ataque +10%</span>
+          <span id="aviso-bonus-turno" class="aviso-bonus-turno" hidden>Contra-ataque aberto</span>
         </div>
 
         <!-- Barra de confirmação / status abaixo do campo -->
@@ -565,9 +565,9 @@
                   type="button"
                   class="btn-tipo-chute"
                   data-tipo-chute="colocado"
-                  title="Chute colocado com +6% de precisão e menor chance de ir para fora"
+                  title="Chute colocado com maior precisão e menor risco de sair para fora"
                 >
-                  🎯 Colocado (+6%)
+                  🎯 Colocado
                 </button>
                 <button
                   id="btn-chute-bomba"
@@ -640,7 +640,7 @@
                 <strong>Pressionar o portador</strong>
                 <span id="custo-ordem-pressionar" class="ordem-custo">−10 est. × 2</span>
               </span>
-              <span class="ordem-desc">Pressão no portador ×1,5 na bola; time sobe 1 faixa (rival +10 se acertar).</span>
+              <span class="ordem-desc">Marcação forte no portador; time sobe 1 faixa, mas abre espaço se o rival escapar.</span>
               <span id="envolvidos-ordem-pressionar" class="ordem-envolvidos"></span>
             </button>
 
@@ -649,7 +649,7 @@
                 <strong>Fechar linha de passe</strong>
                 <span id="custo-ordem-fechar_linha" class="ordem-custo">−6 est. × 2</span>
               </span>
-              <span class="ordem-desc">Pressão na linha ×1,5 no destino anunciado e ×0,8 nas demais zonas.</span>
+              <span class="ordem-desc">Fecha forte a linha de passe no destino anunciado, aliviando as demais zonas.</span>
               <span id="envolvidos-ordem-fechar_linha" class="ordem-envolvidos"></span>
             </button>
 
@@ -658,7 +658,7 @@
                 <strong>Recuar o bloco</strong>
                 <span id="custo-ordem-recuar" class="ordem-custo">Deslocamento</span>
               </span>
-              <span class="ordem-desc">Time desce 1 faixa; frente e longo rival −10, trás e lateral +5.</span>
+              <span class="ordem-desc">Compacta o time 1 faixa atrás; dificulta passes verticais e longos, cedendo a saída curta.</span>
               <span id="envolvidos-ordem-recuar" class="ordem-envolvidos"></span>
             </button>
 
@@ -667,7 +667,7 @@
                 <strong>Falta tática</strong>
                 <span id="custo-ordem-falta_tatica" class="ordem-custo">−8 est.</span>
               </span>
-              <span id="desc-falta-tatica" class="ordem-desc">Interrompe e reinicia com bola parada (+10% em passes).</span>
+              <span id="desc-falta-tatica" class="ordem-desc">Interrompe o lance e o rival reinicia com bola parada.</span>
               <span id="envolvidos-ordem-falta_tatica" class="ordem-envolvidos"></span>
             </button>
 
@@ -715,7 +715,7 @@
         <section class="bloco-painel" aria-label="Ficha do jogador selecionado">
           <h2 class="titulo-bloco">Ficha do Jogador</h2>
           <div id="ficha-jogador" class="ficha-jogador">
-            <p class="texto-suave">Toque em qualquer chip para ver atributos (1 a 100) e zona-base.</p>
+            <p class="texto-suave">Toque em qualquer chip para ver perfil qualitativo, pé dominante, estamina e habilidades.</p>
           </div>
         </section>
 
@@ -728,7 +728,7 @@
             <span class="amostra-cor nivel-4" aria-hidden="true"></span>
           </div>
           <p class="texto-legenda">
-            Vermelho mais intenso indica maior pressão na linha de passe do rival (0–100). Toque numa zona vizinha para conduzir (pressão no portador).
+            Vermelho mais intenso indica marcação rival mais forte na linha de passe. Toque numa zona vizinha para conduzir.
           </p>
         </section>
       </aside>

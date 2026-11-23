@@ -1189,7 +1189,9 @@ test('meta-progressão: Tela do Clube (Torcida, Estádio, Base, Equipamentos) e 
   assert.equal(jovens.length, 2);
   for (const jv of jovens) {
     assert.ok(jv.preco < 100);
-    assert.ok(jv.jogador.atributos.passe >= 45 && jv.jogador.atributos.passe <= 55);
+    const mediaJv = calcularAvaliacaoPosicional(jv.jogador);
+    assert.ok(mediaJv >= 32 && mediaJv <= 58, `Média do jovem fora do esperado: ${mediaJv}`);
+    assert.ok(jv.jogador.potencial >= 60, `Potencial do jovem da base baixo demais: ${jv.jogador.potencial}`);
   }
 
   // Contrata um jovem e escala como titular para validar evolução +1 atributo após partida
@@ -1510,6 +1512,293 @@ test('finalização aprimorada: 16 turnos por lado, chute colocado (+6%) vs bomb
   const prevPosRebote = avaliarFinalizacao(p, { tipoChute: 'colocado' });
   assert.ok(prevPosRebote.calculo.ajustesChance.some((a) => a.rotulo.includes('Rebote na área') && a.valor === 16));
 });
+
+import {
+  avaliarContextoPeDominante,
+  avaliarFamiliaridadePosicao,
+  avaliarImpactoConcentracao,
+  calcularAvaliacaoPosicional,
+  garantirIdentidadeJogador,
+  obterAtributoMental,
+} from '../js/jogador/identidade.js';
+import {
+  aplicarEvolucaoAtributo,
+  calcularGanhoTreinoAtributo,
+  calcularTetoAtributoJogador,
+  classificarPotencialOlheiro,
+  garantirDesenvolvimentoJogador,
+} from '../js/jogador/desenvolvimento.js';
+import {
+  classificarContextoPasse,
+  narrarLance,
+  resolverDisputaBola,
+  TIPOS_DESFECHO_TECNICO,
+} from '../js/regras/lances.js';
+import {
+  classificarAtributoQualitativo,
+  classificarNivelJogador,
+  classificarOportunidadeJogada,
+  classificarPressaoQualitativa,
+  formatarPeDominante,
+  formatarResumoQualitativoJogador,
+} from '../js/ui/apresentacao.js';
+
+function hidratarCompleto(j) {
+  return garantirDesenvolvimentoJogador(garantirIdentidadeJogador(j));
+}
+
+test('modelo de atributos e elenco inicial: média funcional 40–50, alta variância real e avaliação posicional', () => {
+  const c = iniciarNovaCampanha('VARIANCIA-01');
+  const medias = c.elenco.map((j) => calcularAvaliacaoPosicional(j));
+  const mediaGeral = medias.reduce((acc, v) => acc + v, 0) / medias.length;
+  assert.ok(mediaGeral >= 40 && mediaGeral <= 50, `Média inicial fora de 40–50: ${mediaGeral.toFixed(1)}`);
+
+  // Verifica variância real dentro dos atletas (diferença entre melhor e pior atributo de linha)
+  let atletasComAltaVariancia = 0;
+  for (const j of c.elenco) {
+    if (j.ehGoleiro) continue;
+    const vals = Object.entries(j.atributos)
+      .filter(([k]) => k !== 'defesa')
+      .map(([, v]) => v);
+    const amplitude = Math.max(...vals) - Math.min(...vals);
+    if (amplitude >= 16) atletasComAltaVariancia += 1;
+  }
+  assert.ok(atletasComAltaVariancia >= 12, `Poucos atletas com variância real: ${atletasComAltaVariancia}`);
+
+  // Avaliação posicional dá mais peso ao que importa para a posição
+  const caFinalizador = hidratarCompleto({
+    id: 'ca_fin',
+    nome: 'Matador Teste',
+    posicao: 'CA',
+    papel: 'CA',
+    setor: 'ATA',
+    atributos: {
+      passe: 38, dominio: 62, posicionamento: 66, marcacao: 24,
+      interceptacao: 25, desarme: 22, velocidade: 58, tecnica: 56,
+      dibre: 55, finalizacao: 74, agressividade: 44, defesa: 20,
+    },
+  });
+  const avaliacaoComoCA = calcularAvaliacaoPosicional(caFinalizador, 'CA');
+  const avaliacaoComoZAG = calcularAvaliacaoPosicional(caFinalizador, 'ZAG1');
+  assert.ok(avaliacaoComoCA > avaliacaoComoZAG + 15);
+});
+
+test('familiaridade posicional granular, pé dominante contextual e camada mental (concentração)', () => {
+  const pontaEsq = hidratarCompleto({
+    id: 'pe_teste',
+    nome: 'Lucas Teste',
+    posicao: 'PE',
+    papel: 'PONTA_E',
+    setor: 'ATA',
+    peDominante: 'esquerdo',
+    qualidadePeFraco: 2,
+    mental: { concentracao: 72 },
+    atributos: {
+      passe: 50, dominio: 54, posicionamento: 50, marcacao: 30,
+      interceptacao: 32, desarme: 28, velocidade: 66, tecnica: 56,
+      dibre: 62, finalizacao: 52, agressividade: 40, defesa: 20,
+    },
+  });
+
+  const famNat = avaliarFamiliaridadePosicao(pontaEsq, 'PONTA_E');
+  const famAdap = avaliarFamiliaridadePosicao(pontaEsq, 'PONTA_D');
+  const famImp = avaliarFamiliaridadePosicao(pontaEsq, 'LAT_E');
+  const famFora = avaliarFamiliaridadePosicao(pontaEsq, 'ZAG1');
+  assert.equal(famNat.id, 'natural');
+  assert.ok(famNat.fatorAtributo > famAdap.fatorAtributo);
+  assert.ok(famAdap.fatorAtributo > famImp.fatorAtributo);
+  assert.ok(famImp.fatorAtributo > famFora.fatorAtributo);
+
+  // Pé esquerdo cruzando do corredor esquerdo é favorecido vs corredor direito com pé fraco 2
+  const cruzEsq = avaliarContextoPeDominante({ jogador: pontaEsq, acao: 'cruzar', zonaOrigem: 'Z5-E', zonaDestino: 'Z5-C' });
+  const cruzDir = avaliarContextoPeDominante({ jogador: pontaEsq, acao: 'cruzar', zonaOrigem: 'Z5-D', zonaDestino: 'Z5-C' });
+  assert.ok(cruzEsq.ajusteChance > cruzDir.ajusteChance);
+
+  // Concentração atua em situações de pressão alta / fadiga / finalização decisiva
+  const jogFocado = hidratarCompleto({
+    ...pontaEsq,
+    id: 'focado',
+    atributos: { ...pontaEsq.atributos, concentracao: 78 },
+    mental: { concentracao: 78 },
+    extras: { estamina: 35 },
+  });
+  const jogDesatento = hidratarCompleto({
+    ...pontaEsq,
+    id: 'desatento',
+    atributos: { ...pontaEsq.atributos, concentracao: 28 },
+    mental: { concentracao: 28 },
+    extras: { estamina: 35 },
+  });
+  const impFocado = avaliarImpactoConcentracao({ jogador: jogFocado, pressao: 65, estamina: 35, momentoCritico: true });
+  const impDesatento = avaliarImpactoConcentracao({ jogador: jogDesatento, pressao: 65, estamina: 35, momentoCritico: true });
+  assert.ok(impFocado.ajusteChance > impDesatento.ajusteChance);
+
+  const impTranquilo = avaliarImpactoConcentracao({ jogador: jogDesatento, pressao: 5, estamina: 95, dificuldadeLance: 0.1, momentoCritico: false });
+  assert.ok(Math.abs(impTranquilo.ajusteChance) < Math.abs(impDesatento.ajusteChance));
+});
+
+test('potencial, teto por posição, retornos decrescentes no treino e classificação de olheiro sem número cru', () => {
+  const jovemAlto = hidratarCompleto({
+    id: 'jv_alto',
+    nome: 'Promessa',
+    posicao: 'MEI',
+    papel: 'MEIA_C',
+    setor: 'MEI',
+    idade: 19,
+    potencial: 82,
+    curvaDesenvolvimento: 'equilibrada',
+    atributos: {
+      passe: 44, dominio: 46, posicionamento: 44, marcacao: 38,
+      interceptacao: 40, desarme: 36, velocidade: 50, tecnica: 48,
+      dibre: 46, finalizacao: 40, agressividade: 42, defesa: 20,
+    },
+  });
+
+  const veteranoTeto = hidratarCompleto({
+    id: 'vet_teto',
+    nome: 'Veterano',
+    posicao: 'MEI',
+    papel: 'MEIA_C',
+    setor: 'MEI',
+    idade: 32,
+    potencial: 58,
+    curvaDesenvolvimento: 'precoce',
+    atributos: {
+      passe: 57, dominio: 56, posicionamento: 56, marcacao: 45,
+      interceptacao: 46, desarme: 44, velocidade: 42, tecnica: 56,
+      dibre: 50, finalizacao: 46, agressividade: 48, defesa: 20,
+    },
+  });
+
+  const ganhoJovem = calcularGanhoTreinoAtributo(jovemAlto, 'passe', { intensidade: 1 });
+  const ganhoVet = calcularGanhoTreinoAtributo(veteranoTeto, 'passe', { intensidade: 1 });
+  assert.ok(ganhoJovem.ganho > ganhoVet.ganho, `Jovem (${ganhoJovem.ganho}) deveria evoluir mais que veterano no teto (${ganhoVet.ganho})`);
+
+  const tetoPasse = calcularTetoAtributoJogador(jovemAlto, 'passe');
+  const tetoDesarme = calcularTetoAtributoJogador(jovemAlto, 'desarme');
+  assert.ok(tetoPasse > tetoDesarme, 'Teto deve respeitar identidade posicional do meia');
+
+  // Aplicar evolução registra histórico e respeita teto
+  const resEv = aplicarEvolucaoAtributo(jovemAlto, 'passe', ganhoJovem.ganho, 'treino');
+  assert.ok(resEv.delta > 0);
+  assert.equal(jovemAlto.historicoEvolucao.length, 1);
+
+  // Olheiro retorna apenas rótulo qualitativo (sem números)
+  const olheiro = classificarPotencialOlheiro(jovemAlto);
+  assert.equal(typeof olheiro.rotulo, 'string');
+  assert.ok(!/\d/.test(olheiro.rotulo), `Rótulo de olheiro não deve expor números: ${olheiro.rotulo}`);
+});
+
+test('mercado estratégico gera arquétipos distintos com trade-offs reais de preço, nível e potencial', () => {
+  const c = iniciarNovaCampanha('MERCADO-ARQ-01');
+  const ofertas = gerarOfertasMercado(c, { id: 'c4_n1', camada: 4, tipo: TIPOS_NO.MERCADO });
+  assert.equal(ofertas.length, 4);
+  const arquetipos = new Set(ofertas.map((o) => o.arquetipo));
+  assert.ok(arquetipos.size >= 3, `Mercado deveria ter múltiplos arquétipos: ${[...arquetipos].join(', ')}`);
+
+  const precos = ofertas.map((o) => o.preco);
+  assert.ok(Math.max(...precos) - Math.min(...precos) >= 40, `Faixa de preços muito estreita: ${precos.join(', ')}`);
+});
+
+test('lances encadeados, disputa de bola solta e narração natural sem porcentagens nem sorteio', () => {
+  const p = criarPartida();
+  const zMeio = p.times.meuTime.jogadores.find((j) => j.papel === 'MEI_E');
+  const ca = p.times.meuTime.jogadores.find((j) => j.papel === 'CA');
+  zMeio.zona = 'Z3-C';
+  ca.zona = 'Z5-C';
+
+  const ctxPasse = classificarContextoPasse({
+    tipoId: 'frente',
+    zonaOrigem: 'Z3-C',
+    zonaDestino: 'Z5-C',
+    timeId: 'meuTime',
+    pressaoOrigem: 45,
+    pressaoDestino: 52,
+  });
+  assert.ok(ctxPasse.subtipo && ctxPasse.rotuloContextual);
+
+  const disputa = resolverDisputaBola({
+    jogadoresAtaque: p.times.meuTime.jogadores,
+    jogadoresDefesa: p.times.rival.jogadores,
+    zonaDisputa: 'Z4-C',
+    rng: () => 0.42,
+  });
+  assert.ok(disputa.vencedorLado === 'ataque' || disputa.vencedorLado === 'defesa');
+  assert.ok(disputa.vencedor);
+
+  const narracoes = [
+    narrarLance({ desfechoTecnico: TIPOS_DESFECHO_TECNICO.PASSE_LIMPO, acao: 'passe', passador: zMeio, receptor: ca, zonaDestino: 'Z5-C', contextoPasse: ctxPasse }),
+    narrarLance({ desfechoTecnico: TIPOS_DESFECHO_TECNICO.DOMINIO_RUIM, acao: 'passe', passador: zMeio, receptor: ca, zonaDestino: 'Z5-C', vencedorDisputa: disputa.vencedor }),
+    narrarLance({ desfechoTecnico: TIPOS_DESFECHO_TECNICO.PASSE_DESVIADO, acao: 'passe', passador: zMeio, receptor: ca, zonaDestino: 'Z4-C', vencedorDisputa: disputa.vencedor }),
+    narrarLance({ desfechoTecnico: TIPOS_DESFECHO_TECNICO.BOLA_NA_TRAVE, acao: 'finalizar', passador: ca, zonaOrigem: 'Z5-C', vencedorDisputa: disputa.vencedor }),
+    narrarLance({ desfechoTecnico: TIPOS_DESFECHO_TECNICO.BLOQUEIO, acao: 'finalizar', passador: ca, zonaOrigem: 'Z5-C', vencedorDisputa: disputa.vencedor }),
+  ];
+
+  for (const texto of narracoes) {
+    assert.ok(texto.length > 15, `Narração muito curta: ${texto}`);
+    assert.ok(!/\d+\s*%/.test(texto), `Narração vazou porcentagem crua: ${texto}`);
+    assert.ok(!/sorteio\s*\d+/i.test(texto), `Narração vazou sorteio cru: ${texto}`);
+  }
+
+  // Executa lance real e garante que narração não vaza "%" ou "sorteio"
+  p.portadorId = zMeio.id;
+  p.zonaBola = zMeio.zona;
+  const resPasse = executarPasse(p, ca.id, () => 0.05);
+  assert.ok(resPasse.valido);
+  assert.ok(!/\d+\s*%/.test(resPasse.resultado.texto), `Passe vazou %: ${resPasse.resultado.texto}`);
+  assert.ok(!/sorteio\s*\d+/i.test(resPasse.resultado.texto), `Passe vazou sorteio: ${resPasse.resultado.texto}`);
+});
+
+test('apresentação qualitativa e retrocompatibilidade de jogadores/saves legados', () => {
+  assert.equal(classificarAtributoQualitativo(24).rotulo, 'Muito fraco');
+  assert.equal(classificarAtributoQualitativo(35).rotulo, 'Fraco');
+  assert.equal(classificarAtributoQualitativo(45).rotulo, 'Razoável');
+  assert.equal(classificarAtributoQualitativo(55).rotulo, 'Bom');
+  assert.equal(classificarAtributoQualitativo(64).rotulo, 'Muito bom');
+  assert.equal(classificarAtributoQualitativo(75).rotulo, 'Excelente');
+  assert.equal(classificarAtributoQualitativo(84).rotulo, 'Excepcional');
+
+  assert.equal(classificarOportunidadeJogada(82).rotulo, 'Muito seguro');
+  assert.equal(classificarOportunidadeJogada(66).rotulo, 'Boa oportunidade');
+  assert.equal(classificarOportunidadeJogada(50).rotulo, 'Razoável');
+  assert.equal(classificarOportunidadeJogada(25).rotulo, 'Arriscado');
+  assert.equal(classificarPressaoQualitativa(70).curto, 'Alta+');
+
+  // Jogador legado sem idade/peDominante/potencial/concentracao hidrata deterministicamente
+  const legado1 = hidratarCompleto({
+    id: 'legado_1',
+    nome: 'Carlos Antigo',
+    posicao: 'ZAG',
+    setor: 'DEF',
+    atributos: {
+      passe: 46, dominio: 44, posicionamento: 52, marcacao: 56,
+      interceptacao: 50, desarme: 54, velocidade: 44, tecnica: 42,
+      dibre: 38, finalizacao: 30, agressividade: 52, defesa: 20,
+    },
+  });
+  const legado2 = hidratarCompleto({
+    id: 'legado_1',
+    nome: 'Carlos Antigo',
+    posicao: 'ZAG',
+    setor: 'DEF',
+    atributos: {
+      passe: 46, dominio: 44, posicionamento: 52, marcacao: 56,
+      interceptacao: 50, desarme: 54, velocidade: 44, tecnica: 42,
+      dibre: 38, finalizacao: 30, agressividade: 52, defesa: 20,
+    },
+  });
+
+  assert.equal(legado1.idade, legado2.idade);
+  assert.equal(legado1.peDominante, legado2.peDominante);
+  assert.equal(legado1.potencial, legado2.potencial);
+  assert.equal(obterAtributoMental(legado1, 'concentracao'), obterAtributoMental(legado2, 'concentracao'));
+
+  const resumoQual = formatarResumoQualitativoJogador(legado1);
+  assert.ok(resumoQual.length > 5 && !/\d/.test(resumoQual), `Resumo qualitativo não deve conter números: ${resumoQual}`);
+  assert.ok(formatarPeDominante(legado1).length > 3);
+  assert.ok(classificarNivelJogador(legado1).rotulo.length > 2);
+});
+
 
 
 

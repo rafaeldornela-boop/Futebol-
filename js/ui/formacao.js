@@ -18,6 +18,8 @@ import {
   obterMultiplicadorPressaoLinhaPostura,
   ORDEM_POSTURAS,
 } from '../regras/postura.js';
+import { avaliarFamiliaridadePosicao } from '../jogador/identidade.js';
+import { classificarPressaoQualitativa } from './apresentacao.js';
 
 const FASES_HEATMAP = Object.freeze([
   { id: 'atras', rotulo: 'Atrás', zonaRef: 'Z1-C' },
@@ -77,7 +79,8 @@ function calcularPreviaHeatmapMeuTime({
     }
     const fora = atualizarStatusPosicaoJogador(copia);
     if (fora) {
-      foraPosicaoLista.push(`${copia.nomeCurto} (${copia.posicao} em ${papel})`);
+      const fam = avaliarFamiliaridadePosicao(copia, papel);
+      foraPosicaoLista.push(`${copia.nomeCurto} (${fam.rotulo})`);
     }
     jogadoresSim.push(copia);
   }
@@ -238,16 +241,17 @@ export function renderizarPainelFormacaoHeatmap(
   cabHeat.appendChild(seletorFases);
   blocoHeat.appendChild(cabHeat);
 
-  // Métricas rápidas do mapa
-  const resumoMet = el('div', 'heatmap-metricas num-tabular');
+  // Métricas rápidas do mapa (leitura qualitativa)
+  const resumoMet = el('div', 'heatmap-metricas');
+  const mediaQual = classificarPressaoQualitativa(previa.mediaLinhaCampo);
   resumoMet.append(
-    el('span', 'heatmap-pill', `Média linha: ${previa.mediaLinhaCampo}%`),
+    el('span', 'heatmap-pill', `Cobertura: ${mediaQual.rotulo}`),
     el(
       'span',
       `heatmap-pill${previa.foraPosicaoLista.length > 0 ? ' alerta' : ''}`,
       previa.foraPosicaoLista.length > 0
-        ? `Fora de pos. (−8%): ${previa.foraPosicaoLista.length}`
-        : 'Todos na pos. natural',
+        ? `Improvisados: ${previa.foraPosicaoLista.length}`
+        : 'Todos naturais/adaptados',
     ),
   );
   blocoHeat.appendChild(resumoMet);
@@ -257,7 +261,7 @@ export function renderizarPainelFormacaoHeatmap(
       el(
         'p',
         'heatmap-aviso-fora',
-        `Penalidade de −8% nos atributos: ${previa.foraPosicaoLista.join(' · ')}`,
+        `Atletas fora da função natural: ${previa.foraPosicaoLista.join(' · ')}`,
       ),
     );
   }
@@ -268,28 +272,31 @@ export function renderizarPainelFormacaoHeatmap(
 
   const criarCelulaHeatmap = (zId, ehGol = false) => {
     const pLinha = previa.mapa[zId]?.pressaoLinha ?? 0;
+    const pQual = classificarPressaoQualitativa(pLinha);
     const jogadoresZona = previa.porZona[zId] || [];
     const cel = el('div', `heatmap-celula${ehGol ? ' eh-gol' : ''}`);
     cel.dataset.heatmapZona = zId;
     cel.dataset.pressaoLinha = String(pLinha);
     cel.style.backgroundColor = corCalorPressao(pLinha);
+    cel.title = `${ZONAS[zId]?.nome || zId}: ${pQual.rotulo}`;
 
     const topo = el('div', 'heatmap-cel-topo');
     topo.append(
       el('span', 'heatmap-cel-id', ZONAS[zId]?.nome || zId),
-      el('strong', 'heatmap-cel-val num-tabular', `${pLinha}`),
+      el('strong', 'heatmap-cel-val', pQual.curto),
     );
     cel.appendChild(topo);
 
     if (jogadoresZona.length > 0) {
       const lista = el('div', 'heatmap-cel-jogadores');
       for (const j of jogadoresZona) {
+        const famJ = avaliarFamiliaridadePosicao(j, j.papel);
         const tag = el(
           'span',
           `heatmap-jog-tag${j.foraDePosicao ? ' fora' : ''}`,
           j.nomeCurto,
         );
-        tag.title = `${j.nome} (${j.posicao} em ${j.papel})${j.foraDePosicao ? ' · −8% fora de posição' : ''}`;
+        tag.title = `${j.nome} (${j.posicao} em ${j.papel} · ${famJ.rotulo})`;
         lista.appendChild(tag);
       }
       cel.appendChild(lista);
@@ -319,7 +326,7 @@ export function renderizarPainelFormacaoHeatmap(
     el(
       'p',
       'texto-legenda',
-      'Valores de 0 a 100 medem a pressão na linha de passe do seu time em cada zona na fase selecionada (inclui −8% fora de posição e ×1,10 na postura Defensiva).',
+      'Tons mais intensos mostram maior pressão na linha de passe do seu time na fase selecionada, considerando familiaridade posicional e postura.',
     ),
   );
 

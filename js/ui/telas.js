@@ -4,7 +4,6 @@
  */
 
 import {
-  ehPosicaoNatural,
   FORMACAO_PADRAO,
   obterFormacao,
   obterPapeisFormacao,
@@ -14,7 +13,6 @@ import { normalizarPosturaId, POSTURA_PADRAO } from '../regras/postura.js';
 import { CAMPANHA_CONFIG, METADADOS_NO } from '../campanha/constantes.js';
 import {
   ATRIBUTOS_LINHA,
-  calcularMediaJogador,
   calcularValorMercadoJogador,
   ROTULOS_ATRIBUTOS,
 } from '../campanha/estado.js';
@@ -35,8 +33,18 @@ import {
   validarEscalacao,
   venderJogadorElenco,
 } from '../campanha/nos.js';
+import {
+  avaliarFamiliaridadePosicao,
+  obterAtributoMental,
+} from '../jogador/identidade.js';
 import { obterEstamina, obterFaixaFadiga } from '../regras/estamina.js';
 import { obterHabilidadesJogador } from '../regras/habilidades.js';
+import {
+  classificarAtributoQualitativo,
+  formatarPeDominante,
+  formatarResumoQualitativoJogador,
+  resumirIdentidadeCard,
+} from './apresentacao.js';
 import { renderizarPainelFormacaoHeatmap } from './formacao.js';
 
 function el(tag, classe, texto) {
@@ -46,13 +54,13 @@ function el(tag, classe, texto) {
   return node;
 }
 
+function criarBadgeNivel(nivel, sufixo = '') {
+  const texto = sufixo ? `${nivel.rotulo} · ${sufixo}` : nivel.rotulo;
+  return el('span', `badge-qualitativo compacto nivel-${nivel.nivelCor}`, texto);
+}
+
 function formatarResumoAttrs(jogador) {
-  const a = jogador.atributos;
-  if (jogador.ehGoleiro) {
-    return `DEF\u00A0${a.defesa} · POS\u00A0${a.posicionamento} · PAS\u00A0${a.passe} · DOM\u00A0${a.dominio}`;
-  }
-  const dib = a.dibre ?? a.tecnica;
-  return `PAS\u00A0${a.passe} · DOM\u00A0${a.dominio} · DIB\u00A0${dib} · MAR\u00A0${a.marcacao} · DES\u00A0${a.desarme} · VEL\u00A0${a.velocidade} · FIN\u00A0${a.finalizacao}`;
+  return formatarResumoQualitativoJogador(jogador);
 }
 
 function criarBarraEstaminaElenco(jogador) {
@@ -118,10 +126,12 @@ export function renderizarTelaEscalacao(
       el(
         'p',
         'no-subtitulo',
-        `Força do adversário: ${rival.classificacaoForca} (média ~${Math.round(rival.forcaAlvo)}) · Formação rival: ${rival.formacao || FORMACAO_PADRAO} · Téc. ${nomeTec}` +
-          (estado.moral !== 0
-            ? ` · Moral ativa: ${estado.moral > 0 ? `+${estado.moral}` : estado.moral} em todos atributos nesta partida`
-            : ''),
+        `Força do adversário: ${rival.classificacaoForca} · Formação rival: ${rival.formacao || FORMACAO_PADRAO} · Téc. ${nomeTec}` +
+          (estado.moral > 0
+            ? ' · Moral em alta para esta partida'
+            : estado.moral < 0
+              ? ' · Moral abalada para esta partida'
+              : ''),
       ),
     );
 
@@ -141,7 +151,7 @@ export function renderizarTelaEscalacao(
       'escalacao-dica',
       papelSelecionado
         ? `Selecionado ${ROTULOS_PAPEIS[papelSelecionado] || papelSelecionado}: toque em outro jogador ou reserva para trocar.`
-        : 'Toque em uma vaga titular e depois em um reserva (ou outro titular) para trocar. Fora da posição natural: −8% nos atributos.',
+        : 'Toque em uma vaga titular e depois em um reserva (ou outro titular) para trocar. A familiaridade posicional afeta o rendimento em campo.',
     );
 
     barraAcoesTopo.append(btnAuto, dica);
@@ -159,7 +169,9 @@ export function renderizarTelaEscalacao(
       const jId = titularesPorPapel[papel];
       const j = mapaElenco.get(jId);
       const selecionado = papelSelecionado === papel;
-      const foraDePos = j ? !ehPosicaoNatural(j, papel) : false;
+      const fam = j ? avaliarFamiliaridadePosicao(j, papel) : null;
+      const foraDePos = fam ? fam.id !== 'natural' && fam.id !== 'adaptado' : false;
+      const idCard = j ? resumirIdentidadeCard(j, papel) : null;
 
       const btn = el(
         'button',
@@ -172,14 +184,16 @@ export function renderizarTelaEscalacao(
       topo.append(
         el('span', 'escalacao-papel', ROTULOS_PAPEIS[papel] || papel),
         el('strong', 'escalacao-nome', j ? `${j.nome} (${j.posicao})` : 'Vaga aberta'),
-        el('span', 'escalacao-ovr num-tabular', j ? `OVR ${Math.round(calcularMediaJogador(j))}` : '—'),
+        idCard ? criarBadgeNivel(idCard.nivel) : el('span', 'escalacao-ovr', '—'),
       );
       btn.appendChild(topo);
 
-      if (j) {
-        if (foraDePos) {
+      if (j && idCard) {
+        btn.appendChild(el('div', 'card-identidade-meta', idCard.linhaMeta));
+
+        if (fam && fam.id !== 'natural') {
           btn.appendChild(
-            el('div', 'escalacao-tag-fora', 'Fora da posição natural (−8% nos atributos)'),
+            el('div', `escalacao-tag-fora fam-${fam.id}`, `Posição: ${fam.rotulo}`),
           );
         }
 
@@ -231,6 +245,7 @@ export function renderizarTelaEscalacao(
     const listaBanco = el('div', 'escalacao-lista');
 
     const renderizarCandidatoBanco = (j, ehExtra) => {
+      const idCard = resumirIdentidadeCard(j);
       const btn = el(
         'button',
         `escalacao-card${j.lesionado ? ' lesionado' : ''}${ehExtra ? ' nao-relacionado' : ''}`,
@@ -242,9 +257,10 @@ export function renderizarTelaEscalacao(
       topo.append(
         el('span', 'escalacao-papel', j.lesionado ? 'LES.' : ehExtra ? 'FORA' : 'RES'),
         el('strong', 'escalacao-nome', `${j.nome} (${j.posicao})`),
-        el('span', 'escalacao-ovr num-tabular', `OVR ${Math.round(calcularMediaJogador(j))}`),
+        criarBadgeNivel(idCard.nivel),
       );
       btn.appendChild(topo);
+      btn.appendChild(el('div', 'card-identidade-meta', idCard.linhaMeta));
 
       const sub = el('div', 'escalacao-card-sub');
       sub.append(
@@ -411,6 +427,7 @@ export function renderizarTelaTreino(container, estado, no, { onConcluir } = {})
 
     for (const j of estado.elenco) {
       const habs = obterHabilidadesJogador(j);
+      const idCard = resumirIdentidadeCard(j);
       const btn = el(
         'button',
         `escalacao-card${j.id === jogadorSelecionadoId ? ' selecionado' : ''}`,
@@ -420,9 +437,10 @@ export function renderizarTelaTreino(container, estado, no, { onConcluir } = {})
       topo.append(
         el('span', 'escalacao-papel', j.posicao),
         el('strong', 'escalacao-nome', j.nome),
-        el('span', 'escalacao-ovr num-tabular', `Hab ${habs.length}/2`),
+        criarBadgeNivel(idCard.nivel, `Hab ${habs.length}/2`),
       );
       btn.appendChild(topo);
+      btn.appendChild(el('div', 'card-identidade-meta', idCard.linhaMeta));
       btn.appendChild(el('div', 'escalacao-attrs', formatarResumoAttrs(j)));
       btn.addEventListener('click', () => {
         jogadorSelecionadoId = j.id;
@@ -512,6 +530,7 @@ export function renderizarTelaMercado(container, estado, no, { onConcluir } = {}
 
     for (const ofe of ofertas) {
       const j = ofe.jogador;
+      const idCard = resumirIdentidadeCard(j);
       const card = el(
         'div',
         `mercado-card${ofe.comprado ? ' comprado' : ''}${ofe.ehJovem ? ' jovem-base' : ''}`,
@@ -520,14 +539,22 @@ export function renderizarTelaMercado(container, estado, no, { onConcluir } = {}
       topo.append(
         el('span', 'escalacao-papel', ofe.ehJovem ? `${j.posicao} · BASE` : j.posicao),
         el('strong', 'escalacao-nome', j.nome),
-        el('span', 'escalacao-ovr num-tabular', `OVR ${ofe.media} · $${ofe.preco}`),
+        criarBadgeNivel(idCard.nivel, `$${ofe.preco}`),
       );
       card.appendChild(topo);
+
+      const metaLinha = el('div', 'mercado-meta-linha');
+      if (ofe.arquetipo) {
+        metaLinha.appendChild(el('span', 'badge-arquetipo', ofe.arquetipo));
+      }
+      metaLinha.appendChild(el('span', 'card-identidade-meta', idCard.linhaMeta));
+      card.appendChild(metaLinha);
+
       card.appendChild(el('div', 'escalacao-attrs', formatarResumoAttrs(j)));
 
       if (ofe.ehJovem) {
         card.appendChild(
-          el('div', 'escalacao-habs', 'Promessa da base: ganha +1 em atributo aleatório a cada partida disputada.'),
+          el('div', 'escalacao-habs', 'Promessa da base: evolui com sequência de jogos em campo.'),
         );
       }
 
@@ -568,14 +595,16 @@ export function renderizarTelaMercado(container, estado, no, { onConcluir } = {}
     const totalGoleiros = estado.elenco.filter((x) => x.ehGoleiro).length;
     for (const j of estado.elenco) {
       const valorVenda = calcularValorVendaElenco(estado, j);
+      const idCard = resumirIdentidadeCard(j);
       const card = el('div', 'mercado-card');
       const topo = el('div', 'escalacao-card-topo');
       topo.append(
         el('span', 'escalacao-papel', j.ehJovem ? `${j.posicao} · BASE` : j.posicao),
         el('strong', 'escalacao-nome', `${j.nome}${j.lesionado ? ' (Les.)' : ''}`),
-        el('span', 'escalacao-ovr num-tabular', `OVR ${Math.round(calcularMediaJogador(j))}`),
+        criarBadgeNivel(idCard.nivel),
       );
       card.appendChild(topo);
+      card.appendChild(el('div', 'card-identidade-meta', idCard.linhaMeta));
 
       const btnVender = el(
         'button',
@@ -822,28 +851,47 @@ export function renderizarModalElenco(container, estado) {
   for (const j of estado.elenco) {
     const habs = obterHabilidadesJogador(j);
     const valor = calcularValorMercadoJogador(j);
+    const idCard = resumirIdentidadeCard(j);
 
     const card = el('div', `elenco-insp-card${j.lesionado ? ' lesionado' : ''}`);
     const topo = el('div', 'escalacao-card-topo');
     topo.append(
       el('span', 'escalacao-papel', j.ehJovem ? `${j.posicao} · BASE` : j.posicao),
       el('strong', 'escalacao-nome', `${j.nome}${j.lesionado ? ' · LESIONADO' : ''}`),
-      el(
-        'span',
-        'escalacao-ovr num-tabular',
-        `OVR ${Math.round(calcularMediaJogador(j))} · $${valor}`,
-      ),
+      criarBadgeNivel(idCard.nivel, `$${valor}`),
     );
-    card.append(topo, criarBarraEstaminaElenco(j));
+    card.append(
+      topo,
+      el(
+        'div',
+        'card-identidade-meta',
+        `${idCard.idade} anos · ${formatarPeDominante(j)} · ${idCard.potencial.rotulo}`,
+      ),
+      criarBarraEstaminaElenco(j),
+    );
 
     const gradeAttrs = el('div', 'elenco-insp-attrs');
     const chaves = j.ehGoleiro
       ? ['defesa', 'posicionamento', 'passe', 'dominio', 'interceptacao']
       : ATRIBUTOS_LINHA;
     for (const c of chaves) {
-      const item = el('span', 'elenco-insp-attr num-tabular', `${ROTULOS_ATRIBUTOS[c].slice(0, 3).toUpperCase()} ${j.atributos[c]}`);
+      const faixa = classificarAtributoQualitativo(j.atributos[c]);
+      const item = el(
+        'span',
+        `elenco-insp-attr badge-qualitativo compacto nivel-${faixa.nivelCor}`,
+        `${ROTULOS_ATRIBUTOS[c].slice(0, 3).toUpperCase()}: ${faixa.curto}`,
+      );
+      item.title = `${ROTULOS_ATRIBUTOS[c]}: ${faixa.rotulo}`;
       gradeAttrs.appendChild(item);
     }
+    const faixaConc = classificarAtributoQualitativo(obterAtributoMental(j, 'concentracao'));
+    const itemConc = el(
+      'span',
+      `elenco-insp-attr badge-qualitativo compacto nivel-${faixaConc.nivelCor}`,
+      `CON: ${faixaConc.curto}`,
+    );
+    itemConc.title = `Concentração: ${faixaConc.rotulo}`;
+    gradeAttrs.appendChild(itemConc);
     card.appendChild(gradeAttrs);
 
     if (habs.length > 0) {

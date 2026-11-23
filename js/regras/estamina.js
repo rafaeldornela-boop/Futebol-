@@ -6,6 +6,10 @@
 
 import { obterFaixa } from '../dados/zonas.js';
 import { calcularCustoEstaminaComHabilidades } from './habilidades.js';
+import {
+  obterAtributoMental,
+  obterFatorFamiliaridadePosicao,
+} from '../jogador/identidade.js';
 
 // ============================================================================
 // Constantes de Calibração de Estamina (centralizadas no topo)
@@ -92,12 +96,27 @@ export function obterCorEstamina(jogadorOuEstamina) {
   return obterFaixaFadiga(jogadorOuEstamina).cor;
 }
 
+function obterFatorPosicaoJogador(jogador) {
+  if (!jogador) return 1;
+  // Se um teste ou objeto legado força `foraDePosicao = true` sem papel explícito ou em papel natural, respeita o flag
+  if (jogador.foraDePosicao && !jogador.papel) {
+    return FATOR_FORA_POSICAO;
+  }
+  const fatorGranular = obterFatorFamiliaridadePosicao(jogador);
+  if (jogador.foraDePosicao && fatorGranular >= 1) {
+    return FATOR_FORA_POSICAO;
+  }
+  return fatorGranular;
+}
+
 export function obterAtributoEfetivo(jogador, chave) {
   const base =
     chave === 'dibre'
       ? (jogador?.atributos?.dibre ?? jogador?.atributos?.tecnica ?? 0)
-      : (jogador?.atributos?.[chave] ?? 0);
-  const fatorPosicao = jogador?.foraDePosicao ? FATOR_FORA_POSICAO : 1;
+      : chave === 'concentracao'
+        ? obterAtributoMental(jogador, 'concentracao')
+        : (jogador?.atributos?.[chave] ?? 0);
+  const fatorPosicao = obterFatorPosicaoJogador(jogador);
   return base * fatorPosicao * obterMultiplicadorFadiga(jogador);
 }
 
@@ -106,9 +125,11 @@ export function obterAtributoEfetivoComBonus(jogador, chave, bonusAtributos = nu
   const valorBruto =
     chave === 'dibre'
       ? (jogador?.atributos?.dibre ?? jogador?.atributos?.tecnica ?? 0)
-      : (jogador?.atributos?.[chave] ?? 0);
+      : chave === 'concentracao'
+        ? obterAtributoMental(jogador, 'concentracao')
+        : (jogador?.atributos?.[chave] ?? 0);
   const base = valorBruto + extra;
-  const fatorPosicao = jogador?.foraDePosicao ? FATOR_FORA_POSICAO : 1;
+  const fatorPosicao = obterFatorPosicaoJogador(jogador);
   return base * fatorPosicao * obterMultiplicadorFadiga(jogador);
 }
 

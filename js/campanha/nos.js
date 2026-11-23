@@ -14,6 +14,7 @@ import {
   obterHabilidadesDisponiveis,
 } from '../dados/habilidades.js';
 import {
+  atualizarStatusPosicaoJogador,
   ehPosicaoNatural,
   FORMACAO_PADRAO,
   obterFormacao,
@@ -27,7 +28,6 @@ import { criarInstanciaHabilidade } from '../regras/habilidades.js';
 import { CAMPANHA_CONFIG, TIPOS_NO } from './constantes.js';
 import { obterEventosDisponiveis } from './eventos.js';
 import {
-  ajustarAtributoClamped,
   ATRIBUTOS_LINHA,
   calcularMediaJogador,
   calcularValorMercadoJogador,
@@ -37,6 +37,13 @@ import {
   ROTULOS_ATRIBUTOS,
 } from './estado.js';
 import { gerarMapaCampanha } from './mapa.js';
+import {
+  aplicarEvolucaoAtributo,
+  aplicarEvolucaoPosPartidaJogador,
+  calcularGanhoTreinoAtributo,
+  garantirDesenvolvimentoJogador,
+} from '../jogador/desenvolvimento.js';
+import { classificarAtributoQualitativo } from '../ui/apresentacao.js';
 
 export function obterModsCampanha(estado) {
   return estado?.modificadoresMeta || modificadoresMeta();
@@ -179,11 +186,16 @@ export function montarTimeParaPartida(
   const bonusAtributos = moral + (mods.bonusAtributosPartida || 0);
 
   const prepararJogador = (base, papel, ehReserva) => {
-    const clone = structuredClone(base);
+    const clone = garantirDesenvolvimentoJogador(structuredClone(base));
     clone.papel = papel;
     clone.ehReserva = ehReserva;
     clone.iniciaComBola = papel === 'ZAG1';
-    clone.foraDePosicao = ehReserva ? false : !ehPosicaoNatural(clone, papel);
+    if (ehReserva) {
+      clone.foraDePosicao = false;
+      clone.familiaridadeAtual = null;
+    } else {
+      atualizarStatusPosicaoJogador(clone);
+    }
     clone.zona = ehReserva ? null : clone.ehGoleiro ? 'GK' : 'Z1-C';
     clone.zonaBase = ehReserva ? null : clone.ehGoleiro ? 'GK' : 'Z1-C';
     clone.extras = {
@@ -201,6 +213,9 @@ export function montarTimeParaPartida(
       for (const attr of Object.keys(clone.atributos)) {
         if (attr === 'agressividade') continue;
         clone.atributos[attr] = Math.max(1, Math.min(100, clone.atributos[attr] + bonusAtributos));
+      }
+      if (clone.mental && typeof clone.atributos.concentracao === 'number') {
+        clone.mental.concentracao = clone.atributos.concentracao;
       }
     }
     return clone;
@@ -308,26 +323,23 @@ export function aplicarPosPartidaCampanha(
     }
   }
 
-  // 1b. Evolução dos jovens da base que atuaram na partida (+1 atributo aleatório por partida)
+  // 1b. Evolução dos jovens da base que atuaram na partida (ponderada pela função e teto)
   const jovensEvoluidos = [];
   if (mods.jovemEvolucaoPorPartida > 0) {
     const participantesSet = new Set(resultadoPartida.participantesIds || []);
     for (const j of estado.elenco) {
       if (!j.ehJovem || !participantesSet.has(j.id)) continue;
-      const chaves = j.ehGoleiro
-        ? ['defesa', 'posicionamento', 'passe', 'dominio', 'interceptacao']
-        : ATRIBUTOS_LINHA;
-      const elegiveis = chaves.filter((attr) => (j.atributos?.[attr] ?? 100) < 100);
-      if (elegiveis.length === 0) continue;
-      const attrEscolhido = elegiveis[Math.floor(rngEvolucao() * elegiveis.length)];
-      const delta = ajustarAtributoClamped(j, attrEscolhido, mods.jovemEvolucaoPorPartida);
-      if (delta > 0) {
+      let resEv = null;
+      for (let passo = 0; passo < mods.jovemEvolucaoPorPartida; passo += 1) {
+        resEv = aplicarEvolucaoPosPartidaJogador(j, rngEvolucao);
+      }
+      if (resEv && resEv.delta > 0) {
         jovensEvoluidos.push({
           jogadorId: j.id,
           nome: j.nomeCurto,
-          atributo: attrEscolhido,
-          rotuloAtributo: ROTULOS_ATRIBUTOS[attrEscolhido] || attrEscolhido,
-          ganho: delta,
+          atributo: resEv.atributo,
+          rotuloAtributo: ROTULOS_ATRIBUTOS[resEv.atributo] || resEv.atributo,
+          ganho: resEv.delta,
         });
       }
     }
@@ -446,11 +458,13 @@ export function aplicarPosPartidaCampanha(
 
 /**
  * Gera 3 opções determinísticas de treino para um jogador específico:
- * combina aumentos de +3 em atributos e habilidades compatíveis (incluindo pacotes desbloqueados).
+ * combina evolução de atributos com retorno decrescente (respeitando potencial e teto)
+ * e habilidades compatíveis (incluindo pacotes desbloqueados).
  */
 export function gerarOpcoesTreinoParaJogador(estado, no, jogadorId) {
   const jogador = estado.elenco.find((j) => j.id === jogadorId);
   if (!jogador) return [];
+  garantirDesenvolvimentoJogador(jogador);
 
   const mods = obterModsCampanha(estado);
   const habsPool = obterHabilidadesDisponiveis(mods.pacotesDesbloqueados);
@@ -481,8 +495,8 @@ export function gerarOpcoesTreinoParaJogador(estado, no, jogadorId) {
   }
 
   const attrsPool = jogador.ehGoleiro
-    ? ['defesa', 'posicionamento', 'passe', 'dominio', 'interceptacao']
-    : [...ATRIBUTOS_LINHA];
+    ? ['defesa', 'posicionamento', 'passe', 'dominio', 'concentracao']
+    : [...ATRIBUTOS_LINHA, 'concentracao'];
 
   const embaralhados = [...attrsPool];
   for (let i = embaralhados.length - 1; i > 0; i -= 1) {
@@ -490,33 +504,47 @@ export function gerarOpcoesTreinoParaJogador(estado, no, jogadorId) {
     [embaralhados[i], embaralhados[j]] = [embaralhados[j], embaralhados[i]];
   }
 
-  for (const attr of embaralhados) {
-    if (opcoes.length >= CAMPANHA_CONFIG.opcoesTreinoSorteadas) break;
-    const valorAtual = jogador.atributos[attr] ?? 70;
-    if (valorAtual >= 100) continue;
-    opcoes.push({
+  // Prioriza atributos que ainda possuem margem real de evolução abaixo do teto
+  embaralhados.sort((a, b) => {
+    const ga = calcularGanhoTreinoAtributo(jogador, a).ganho;
+    const gb = calcularGanhoTreinoAtributo(jogador, b).ganho;
+    return (gb > 0 ? 1 : 0) - (ga > 0 ? 1 : 0);
+  });
+
+  const montarOpcaoAtributo = (attr) => {
+    const prev = calcularGanhoTreinoAtributo(jogador, attr);
+    const nomeAttr = ROTULOS_ATRIBUTOS[attr] || attr;
+    const faixaAntes = classificarAtributoQualitativo(prev.valorAntes).rotulo;
+    const faixaDepois = classificarAtributoQualitativo(prev.valorDepois).rotulo;
+
+    let notaRitmo = 'Boa resposta esperada ao treino';
+    if (prev.ganho <= 0) {
+      notaRitmo = 'Próximo do limite natural — manutenção de forma';
+    } else if (prev.ganho >= 4) {
+      notaRitmo = 'Salto expressivo esperado';
+    } else if (prev.ganho === 1) {
+      notaRitmo = 'Lapidação fina perto do teto';
+    }
+
+    const mudancaNivel =
+      faixaAntes !== faixaDepois
+        ? `${faixaAntes} → ${faixaDepois}`
+        : `Nível atual: ${faixaAntes}`;
+
+    return {
       id: `attr:${attr}`,
       tipo: 'atributo',
       atributo: attr,
-      bonus: CAMPANHA_CONFIG.bonusAtributoTreino,
-      titulo: `+${CAMPANHA_CONFIG.bonusAtributoTreino} ${ROTULOS_ATRIBUTOS[attr] || attr}`,
-      descricao: `${ROTULOS_ATRIBUTOS[attr] || attr}: ${valorAtual} → ${Math.min(100, valorAtual + CAMPANHA_CONFIG.bonusAtributoTreino)}`,
-    });
-  }
+      bonus: prev.ganho,
+      estagio: prev.estagio,
+      titulo: `Treinar ${nomeAttr}`,
+      descricao: `${mudancaNivel} · ${notaRitmo}`,
+    };
+  };
 
-  // Fallback se algum atributo estivesse no teto 100
-  while (opcoes.length < CAMPANHA_CONFIG.opcoesTreinoSorteadas && embaralhados.length > 0) {
-    const attr = embaralhados.pop();
-    if (!opcoes.some((o) => o.atributo === attr)) {
-      opcoes.push({
-        id: `attr:${attr}`,
-        tipo: 'atributo',
-        atributo: attr,
-        bonus: CAMPANHA_CONFIG.bonusAtributoTreino,
-        titulo: `+${CAMPANHA_CONFIG.bonusAtributoTreino} ${ROTULOS_ATRIBUTOS[attr] || attr}`,
-        descricao: `Refina ${ROTULOS_ATRIBUTOS[attr] || attr} (+${CAMPANHA_CONFIG.bonusAtributoTreino}).`,
-      });
-    }
+  for (const attr of embaralhados) {
+    if (opcoes.length >= CAMPANHA_CONFIG.opcoesTreinoSorteadas) break;
+    opcoes.push(montarOpcaoAtributo(attr));
   }
 
   return opcoes;
@@ -525,6 +553,7 @@ export function gerarOpcoesTreinoParaJogador(estado, no, jogadorId) {
 export function aplicarTreino(estado, no, jogadorId, opcaoId) {
   const jogador = estado.elenco.find((j) => j.id === jogadorId);
   if (!jogador) return { valido: false, motivo: 'Jogador não encontrado.' };
+  garantirDesenvolvimentoJogador(jogador);
 
   const opcoes = gerarOpcoesTreinoParaJogador(estado, no, jogadorId);
   const opcao = opcoes.find((o) => o.id === opcaoId);
@@ -541,8 +570,22 @@ export function aplicarTreino(estado, no, jogadorId, opcaoId) {
     jogador.extras.habilidades.push(inst);
     resumo = `${jogador.nomeCurto} aprendeu a habilidade ${opcao.titulo.replace('Aprender: ', '')}!`;
   } else {
-    const ganho = ajustarAtributoClamped(jogador, opcao.atributo, opcao.bonus);
-    resumo = `${jogador.nomeCurto} treinou e ganhou +${ganho} em ${ROTULOS_ATRIBUTOS[opcao.atributo]}.`;
+    const prev = calcularGanhoTreinoAtributo(jogador, opcao.atributo);
+    const nomeAttr = ROTULOS_ATRIBUTOS[opcao.atributo] || opcao.atributo;
+    if (prev.ganho <= 0) {
+      resumo = `${jogador.nomeCurto} manteve a forma em ${nomeAttr}, já muito perto do seu limite natural.`;
+    } else {
+      const ev = aplicarEvolucaoAtributo(jogador, opcao.atributo, prev.ganho, 'treino');
+      const faixaAntes = classificarAtributoQualitativo(ev.antes).rotulo;
+      const faixaDepois = classificarAtributoQualitativo(ev.depois).rotulo;
+      const salto =
+        faixaAntes !== faixaDepois
+          ? ` (subiu para ${faixaDepois})`
+          : prev.ganho >= 3
+            ? ' (evolução nítida)'
+            : ' (lapidação técnica)';
+      resumo = `${jogador.nomeCurto} evoluiu em ${nomeAttr}${salto}.`;
+    }
   }
 
   registrarVisitaNo(estado, no, { resumo });
@@ -657,7 +700,8 @@ export function escolherPatrocinio(estado, no, ofertaId) {
 }
 
 /**
- * Gera 4 jogadores padrão no Mercado (100 a 400 base) + N jovens promissores da Base (45 a 55),
+ * Gera 4 jogadores estratégicos no Mercado (mix de composição barata, bom titular,
+ * jovem de alto potencial e especialista/estrela rara cara) + N jovens da Base,
  * aplicando eventual desconto do técnico Negociador (−15%).
  */
 export function gerarOfertasMercado(estado, no) {
@@ -665,6 +709,7 @@ export function gerarOfertasMercado(estado, no) {
   const habsPool = obterHabilidadesDisponiveis(mods.pacotesDesbloqueados);
   const fatorPreco = mods.fatorPrecoMercado ?? 1;
   const qtdJovens = mods.jovensNoMercado || 0;
+  const camada = no?.camada || 1;
 
   const rng = criarRng(`${estado.seed}::mercado::${no.id}`);
   const modelosPos = [
@@ -686,28 +731,136 @@ export function gerarOfertasMercado(estado, no) {
     escolhidos.push(poolPos.splice(idx, 1)[0]);
   }
 
+  const montarAtributosComIdentidade = (spec, nivelAlvo, especialista = false) => {
+    const spread = especialista ? 10 : 7;
+    const attr = (bias = 0) =>
+      Math.max(18, Math.min(96, Math.round(nivelAlvo + bias + inteiroAleatorio(-spread, spread, rng))));
+
+    if (spec.ehGoleiro) {
+      return {
+        passe: attr(-10),
+        dominio: attr(-10),
+        posicionamento: attr(especialista ? 8 : 3),
+        marcacao: attr(-20),
+        interceptacao: attr(-6),
+        desarme: attr(-20),
+        velocidade: attr(-14),
+        tecnica: attr(-12),
+        dibre: attr(-22),
+        finalizacao: attr(-26),
+        agressividade: inteiroAleatorio(18, 34, rng),
+        concentracao: attr(especialista ? 7 : 2),
+        defesa: attr(especialista ? 10 : 5),
+      };
+    }
+
+    const ehZAG = spec.posicao === 'ZAG';
+    const ehLAT = spec.posicao === 'LE' || spec.posicao === 'LD';
+    const ehVOL = spec.posicao === 'VOL';
+    const ehMEI = spec.posicao === 'ME' || spec.posicao === 'MD';
+    const ehPONTA = spec.posicao === 'PE' || spec.posicao === 'PD';
+    const ehCA = spec.posicao === 'CA';
+
+    return {
+      passe: attr(ehMEI ? (especialista ? 12 : 7) : ehVOL ? 4 : ehZAG ? -9 : ehCA ? -10 : 0),
+      dominio: attr(ehMEI || ehCA || ehPONTA ? 5 : ehZAG ? -9 : 0),
+      posicionamento: attr(ehZAG || ehVOL || ehCA ? 5 : 0),
+      marcacao: attr(ehZAG ? (especialista ? 12 : 7) : ehVOL ? 6 : ehLAT ? 1 : ehCA || ehPONTA ? -20 : -11),
+      interceptacao: attr(ehVOL ? (especialista ? 12 : 7) : ehZAG ? 5 : ehCA || ehPONTA ? -18 : -8),
+      desarme: attr(ehZAG ? (especialista ? 12 : 7) : ehVOL ? 6 : ehLAT ? 1 : ehCA || ehPONTA ? -20 : -11),
+      velocidade: attr(ehPONTA ? (especialista ? 14 : 9) : ehLAT ? 8 : ehZAG ? -10 : ehVOL ? -6 : 0),
+      tecnica: attr(ehMEI ? (especialista ? 11 : 7) : ehPONTA ? 6 : ehZAG ? -12 : 0),
+      dibre: attr(ehPONTA ? (especialista ? 14 : 9) : ehMEI ? 6 : ehLAT ? 2 : ehZAG ? -18 : -2),
+      finalizacao: attr(ehCA ? (especialista ? 14 : 9) : ehPONTA ? 5 : ehMEI ? 0 : ehZAG ? -22 : -12),
+      agressividade: inteiroAleatorio(26, 74, rng),
+      concentracao: attr(ehZAG || ehVOL ? 4 : ehPONTA ? -4 : 0),
+    };
+  };
+
+  // 4 arquétipos distintos por mercado para decisões estratégicas reais
+  const arquetipos = [
+    {
+      id: 'composicao',
+      rotulo: 'Opção econômica',
+      nivelMin: 43,
+      nivelMax: 50,
+      idadeMin: 24,
+      idadeMax: 30,
+      potBonusMin: 2,
+      potBonusMax: 8,
+      especialista: false,
+      chanceHab: 0.25,
+    },
+    {
+      id: 'titular',
+      rotulo: 'Reforço imediato',
+      nivelMin: 52 + Math.min(5, Math.floor(camada / 2)),
+      nivelMax: 60 + Math.min(6, Math.floor(camada / 2)),
+      idadeMin: 23,
+      idadeMax: 28,
+      potBonusMin: 4,
+      potBonusMax: 12,
+      especialista: false,
+      chanceHab: 0.65,
+    },
+    {
+      id: 'promessa',
+      rotulo: 'Jovem promessa',
+      nivelMin: 41,
+      nivelMax: 50,
+      idadeMin: 18,
+      idadeMax: 20,
+      potBonusMin: 22,
+      potBonusMax: 36,
+      especialista: true,
+      chanceHab: 0.4,
+    },
+    camada >= 5 && rng() < 0.35
+      ? {
+          id: 'craque_raro',
+          rotulo: 'Destaque raro',
+          nivelMin: 68,
+          nivelMax: 78,
+          idadeMin: 22,
+          idadeMax: 27,
+          potBonusMin: 8,
+          potBonusMax: 16,
+          especialista: true,
+          chanceHab: 0.95,
+        }
+      : {
+          id: 'especialista',
+          rotulo: 'Especialista',
+          nivelMin: 57 + Math.min(6, Math.floor(camada / 2)),
+          nivelMax: 65 + Math.min(6, Math.floor(camada / 2)),
+          idadeMin: 22,
+          idadeMax: 29,
+          potBonusMin: 6,
+          potBonusMax: 16,
+          especialista: true,
+          chanceHab: 0.8,
+        },
+  ];
+
   const ofertasRegulares = escolhidos.map((spec, idx) => {
-    const nivelAlvo = inteiroAleatorio(66, 86, rng);
+    const arq = arquetipos[idx % arquetipos.length];
+    const nivelAlvo = inteiroAleatorio(arq.nivelMin, arq.nivelMax, rng);
+    const idade = inteiroAleatorio(arq.idadeMin, arq.idadeMax, rng);
     const nomeP = NOMES_MERCADO_P[Math.floor(rng() * NOMES_MERCADO_P.length)];
     const nomeS = NOMES_MERCADO_S[Math.floor(rng() * NOMES_MERCADO_S.length)];
 
-    const attr = (bias = 0) =>
-      Math.max(30, Math.min(96, nivelAlvo + bias + inteiroAleatorio(-6, 6, rng)));
-
-    const atributos = {
-      passe: attr(spec.setor === 'MEI' ? 5 : 0),
-      dominio: attr(spec.setor !== 'DEF' ? 3 : 0),
-      posicionamento: attr(2),
-      marcacao: attr(spec.setor === 'DEF' ? 6 : spec.setor === 'ATA' ? -15 : 0),
-      interceptacao: attr(spec.setor === 'DEF' || spec.posicao === 'VOL' ? 5 : -8),
-      desarme: attr(spec.setor === 'DEF' ? 6 : spec.setor === 'ATA' ? -16 : 0),
-      velocidade: attr(['LE', 'LD', 'PE', 'PD'].includes(spec.posicao) ? 7 : 0),
-      tecnica: attr(spec.setor === 'MEI' || spec.setor === 'ATA' ? 5 : 0),
-      dibre: attr(spec.setor === 'ATA' || spec.setor === 'MEI' ? 6 : 0),
-      finalizacao: attr(spec.setor === 'ATA' ? 7 : spec.setor === 'DEF' ? -16 : -2),
-      agressividade: attr(-10),
-      ...(spec.ehGoleiro ? { defesa: attr(7) } : {}),
-    };
+    const atributos = montarAtributosComIdentidade(spec, nivelAlvo, arq.especialista);
+    const peRoll = rng();
+    const peDominante =
+      spec.posicao === 'LE'
+        ? 'esquerdo'
+        : spec.posicao === 'LD'
+          ? 'direito'
+          : peRoll < 0.1
+            ? 'ambidestro'
+            : peRoll < 0.36
+              ? 'esquerdo'
+              : 'direito';
 
     const jogador = {
       id: `mer_${no.id}_${idx}`,
@@ -718,11 +871,18 @@ export function gerarOfertasMercado(estado, no) {
       setor: spec.setor,
       ehGoleiro: spec.ehGoleiro,
       ehJovem: false,
+      ehMercado: true,
+      nivelObservacao: 1,
+      arquetipoMercado: arq.rotulo,
+      idade,
+      peDominante,
+      qualidadePeFraco: peDominante === 'ambidestro' ? 5 : inteiroAleatorio(1, 4, rng),
       lesionado: false,
       iniciaComBola: false,
       zona: null,
       zonaBase: null,
       atributos,
+      mental: { concentracao: atributos.concentracao },
       extras: {
         estamina: 100,
         habilidades: [],
@@ -731,8 +891,17 @@ export function gerarOfertasMercado(estado, no) {
       },
     };
 
+    const notaAtual = Math.round(calcularMediaJogador(jogador));
+    jogador.potencial = Math.min(
+      94,
+      notaAtual + inteiroAleatorio(arq.potBonusMin, arq.potBonusMax, rng),
+    );
+    const curvas = ['precoce', 'equilibrada', 'tardia'];
+    jogador.curvaDesenvolvimento = curvas[Math.floor(rng() * curvas.length)];
+    garantirDesenvolvimentoJogador(jogador);
+
     const compativeis = habsPool.filter((h) => jogadorPodeTerHabilidade(jogador, h));
-    if (compativeis.length > 0 && (nivelAlvo >= 75 || rng() < 0.5)) {
+    if (compativeis.length > 0 && rng() < arq.chanceHab) {
       const hab = compativeis[Math.floor(rng() * compativeis.length)];
       jogador.extras.habilidades.push(criarInstanciaHabilidade(hab.id));
     }
@@ -742,6 +911,7 @@ export function gerarOfertasMercado(estado, no) {
     return {
       indice: idx,
       ehJovem: false,
+      arquetipo: arq.rotulo,
       jogador,
       precoBase,
       preco,
@@ -749,7 +919,7 @@ export function gerarOfertasMercado(estado, no) {
     };
   });
 
-  // Jovens promissores das Categorias de Base (atributos 45..55, preço baixo, evoluem +1/jogo)
+  // Jovens promissores das Categorias de Base (variados, baratos, alto potencial, evoluem por jogo)
   const ofertasJovens = [];
   const poolJovemPos = modelosPos.filter((m) => !m.ehGoleiro);
   for (let k = 0; k < qtdJovens; k += 1) {
@@ -759,22 +929,20 @@ export function gerarOfertasMercado(estado, no) {
         : poolJovemPos[Math.floor(rng() * poolJovemPos.length)];
     const nomeP = NOMES_MERCADO_P[Math.floor(rng() * NOMES_MERCADO_P.length)];
     const nomeS = NOMES_MERCADO_S[Math.floor(rng() * NOMES_MERCADO_S.length)];
-    const attrJovem = () => inteiroAleatorio(45, 55, rng);
+    const baseJovem = inteiroAleatorio(40, 48, rng);
+    const atributos = montarAtributosComIdentidade(spec, baseJovem, true);
 
-    const atributos = {
-      passe: attrJovem(),
-      dominio: attrJovem(),
-      posicionamento: attrJovem(),
-      marcacao: attrJovem(),
-      interceptacao: attrJovem(),
-      desarme: attrJovem(),
-      velocidade: attrJovem(),
-      tecnica: attrJovem(),
-      dibre: attrJovem(),
-      finalizacao: attrJovem(),
-      agressividade: inteiroAleatorio(35, 55, rng),
-      ...(spec.ehGoleiro ? { defesa: attrJovem() } : {}),
-    };
+    const peRoll = rng();
+    const peDominante =
+      spec.posicao === 'LE'
+        ? 'esquerdo'
+        : spec.posicao === 'LD'
+          ? 'direito'
+          : peRoll < 0.08
+            ? 'ambidestro'
+            : peRoll < 0.34
+              ? 'esquerdo'
+              : 'direito';
 
     const jogador = {
       id: `jovem_${no.id}_${k}`,
@@ -785,11 +953,20 @@ export function gerarOfertasMercado(estado, no) {
       setor: spec.setor,
       ehGoleiro: spec.ehGoleiro,
       ehJovem: true,
+      ehMercado: true,
+      nivelObservacao: 1,
+      arquetipoMercado: 'Joia da Base',
+      idade: inteiroAleatorio(17, 19, rng),
+      peDominante,
+      qualidadePeFraco: peDominante === 'ambidestro' ? 5 : inteiroAleatorio(1, 3, rng),
+      potencial: inteiroAleatorio(66, 86, rng),
+      curvaDesenvolvimento: rng() < 0.5 ? 'precoce' : 'equilibrada',
       lesionado: false,
       iniciaComBola: false,
       zona: null,
       zonaBase: null,
       atributos,
+      mental: { concentracao: atributos.concentracao },
       extras: {
         estamina: 100,
         habilidades: [],
@@ -797,6 +974,7 @@ export function gerarOfertasMercado(estado, no) {
         substituido: false,
       },
     };
+    garantirDesenvolvimentoJogador(jogador);
 
     const indice = ofertasRegulares.length + k;
     const precoBase = inteiroAleatorio(45, 70, rng);
@@ -804,6 +982,7 @@ export function gerarOfertasMercado(estado, no) {
     ofertasJovens.push({
       indice,
       ehJovem: true,
+      arquetipo: 'Joia da Base',
       jogador,
       precoBase,
       preco,

@@ -4219,4 +4219,234 @@ body[data-state='campaign_over'] #tela-no-campanha {
   color: #dcfce7;
 }
 
+/* ==========================================================================
+   Apresentação Qualitativa: Faixas de Atributo, Identidade, Olheiro e Barras
+   ========================================================================== */
+
+.ficha-identidade-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.badge-qualitativo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-family: var(--fonte-mono);
+  font-size: 0.67rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  white-space: nowrap;
+}
+
+.badge-qualitativo.compacto {
+  padding: 1px 6px;
+  font-size: 0.64rem;
+}
+
+.badge-qualitativo.nivel-muito-fraco {
+  background: rgba(127, 29, 29, 0.45);
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fca5a5;
+}
+
+.badge-qualitativo.nivel-fraco {
+  background: rgba(154, 52, 18, 0.42);
+  border-color: rgba(251, 146, 60, 0.45);
+  color: #fdba74;
+}
+
+.badge-qualitativo.nivel-razoavel {
+  background: rgba(71, 85, 105, 0.45);
+  border-color: rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+}
+
+.badge-qualitativo.nivel-bom {
+  background: rgba(22, 101, 52, 0.45);
+  border-color: rgba(74, 222, 128, 0.42);
+  color: #bbf7d0;
+}
+
+.badge-qualitativo.nivel-muito-bom {
+  background: rgba(15, 118, 110, 0.45);
+  border-color: rgba(45, 212, 191, 0.48);
+  color: #99f6e4;
+}
+
+.badge-qualitativo.nivel-excelente {
+  background: rgba(29, 78, 216, 0.44);
+  border-color: rgba(96, 165, 250, 0.55);
+  color: #bfdbfe;
+}
+
+.badge-qualitativo.nivel-excepcional {
+  background: rgba(161, 98, 7, 0.5);
+  border-color: rgba(250, 204, 21, 0.65);
+  color: #fef08a;
+}
+
+.badge-familiaridade,
+.badge-potencial,
+.badge-arquetipo {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.badge-familiaridade.fam-natural {
+  background: rgba(22, 163, 74, 0.22);
+  border: 1px solid rgba(74, 222, 128, 0.38);
+  color: #86efac;
+}
+
+.badge-familiaridade.fam-adaptado {
+  background: rgba(56, 189, 248, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  color: #bae6fd;
+}
+
+.badge-familiaridade.fam-improvisado_leve {
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #fde68a;
+}
+
+.badge-familiaridade.fam-improvisado_forte,
+.badge-familiaridade.fam-fora_setor {
+  background: rgba(220, 38, 38, 0.22);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  color: #fca5a5;
+}
+
+.badge-potencial {
+  background: rgba(245, 184, 46, 0.14);
+  border: 1px solid rgba(245, 184, 46, 0.36);
+  color: #fde68a;
+}
+
+.badge-arquetipo {
+  background: rgba(56, 189, 248, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #bae6fd;
+}
+
+.card-identidade-meta {
+  font-size: 0.7rem;
+  color: var(--texto-secundario);
+  line-height: 1.3;
+  margin-top: 2px;
+}
+
+.mercado-meta-linha {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0 4px;
+}
+
+/* Indicador qualitativo de oportunidade (barra de 5 segmentos + rótulo) */
+.indicador-oportunidade {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.indicador-oportunidade.compacto {
+  padding: 1px 6px;
+  gap: 5px;
+}
+
+.oportunidade-barras {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.oportunidade-seg {
+  width: 6px;
+  height: 9px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.indicador-oportunidade.compacto .oportunidade-seg {
+  width: 5px;
+  height: 8px;
+}
+
+.indicador-oportunidade.nivel-seguro .oportunidade-seg.ativo {
+  background: var(--risco-seguro);
+}
+
+.indicador-oportunidade.nivel-arriscado .oportunidade-seg.ativo {
+  background: var(--risco-arriscado);
+}
+
+.indicador-oportunidade.nivel-dificil .oportunidade-seg.ativo {
+  background: var(--risco-dificil);
+}
+
+.oportunidade-rotulo {
+  font-family: var(--fonte-mono);
+  font-size: 0.71rem;
+  font-weight: 700;
+  color: var(--texto-principal);
+}
+
+.indicador-oportunidade.nivel-seguro .oportunidade-rotulo {
+  color: #86efac;
+}
+
+.indicador-oportunidade.nivel-arriscado .oportunidade-rotulo {
+  color: #fde68a;
+}
+
+.indicador-oportunidade.nivel-dificil .oportunidade-rotulo {
+  color: #fca5a5;
+}
+
+/* Destaque sutil de oportunidade nos botões de ação dentro da zona */
+.btn-acao-zona.nivel-op-seguro {
+  border-color: rgba(74, 222, 128, 0.85);
+}
+
+.btn-acao-zona.nivel-op-arriscado {
+  border-color: rgba(251, 191, 36, 0.85);
+}
+
+.btn-acao-zona.nivel-op-dificil {
+  border-color: rgba(248, 113, 113, 0.85);
+}
+
+.selo-jogada.tipo-trave,
+.selo-jogada.tipo-rebote,
+.selo-jogada.tipo-disputa {
+  color: var(--risco-arriscado);
+}
+
+.selo-jogada.tipo-bloqueio {
+  color: #f87171;
+}
+
+
 

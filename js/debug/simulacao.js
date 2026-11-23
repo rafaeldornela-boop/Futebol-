@@ -34,18 +34,20 @@ function calcularMediaEstaminaCampo(jogadores) {
 
 export function simularPartidasEquilibrio({
   quantidade = 200,
-  forcaRival = 71,
+  forcaRival = 46,
   clubeId = 'equilibrado',
   tecnicoId = 'padrao',
   formacaoMeu = FORMACAO_PADRAO,
   posturaMeu = POSTURA_PADRAO,
   formacaoRival = FORMACAO_PADRAO,
   posturaRival = POSTURA_PADRAO,
+  ajusteConcentracaoMeu = 0,
+  estaminaInicialMeu = 100,
   meta = null,
   seedBase = 'SIM-EQUILIBRIO',
 } = {}) {
   const total = Math.max(1, Math.min(1000, Math.floor(Number(quantidade) || 200)));
-  const forca = Math.max(50, Math.min(100, Number(forcaRival) || 71));
+  const forca = Math.max(25, Math.min(100, Number(forcaRival) || 46));
   const formMeuId = obterFormacao(formacaoMeu).id;
   const formRivalId = obterFormacao(formacaoRival).id;
   const postMeuId = normalizarPosturaId(posturaMeu);
@@ -75,6 +77,22 @@ export function simularPartidasEquilibrio({
     { formacao: formMeuId, postura: postMeuId },
   );
 
+  if (ajusteConcentracaoMeu !== 0 || estaminaInicialMeu !== 100) {
+    for (const j of [...meuTimeModelo.jogadores, ...meuTimeModelo.reservas]) {
+      if (ajusteConcentracaoMeu !== 0) {
+        const novaConc = Math.max(
+          15,
+          Math.min(98, (j.atributos.concentracao ?? 45) + ajusteConcentracaoMeu),
+        );
+        j.atributos.concentracao = novaConc;
+        if (j.mental) j.mental.concentracao = novaConc;
+      }
+      if (estaminaInicialMeu !== 100 && j.extras) {
+        j.extras.estamina = Math.max(5, Math.min(100, estaminaInicialMeu));
+      }
+    }
+  }
+
   let vitorias = 0;
   let empates = 0;
   let derrotas = 0;
@@ -82,6 +100,18 @@ export function simularPartidasEquilibrio({
   let somaGolsRival = 0;
   let somaEstaminaMeu = 0;
   let somaEstaminaRival = 0;
+  let somaPassesTentadosMeu = 0;
+  let somaPassesCertosMeu = 0;
+  let somaFinalizacoesMeu = 0;
+  let somaFinalizacoesRival = 0;
+  let somaInterceptacoesMeu = 0;
+  let somaInterceptacoesRival = 0;
+  let somaDibresMeu = 0;
+  let somaDisputas = 0;
+  let somaRebotes = 0;
+  let somaTraves = 0;
+  let somaBloqueios = 0;
+  let somaDefesasGoleiro = 0;
 
   for (let i = 0; i < total; i += 1) {
     const rng = criarRng(`${seedBase}::p${i}::f${forca}::${formMeuId}_${postMeuId}::${formRivalId}_${postRivalId}`);
@@ -135,14 +165,34 @@ export function simularPartidasEquilibrio({
     somaGolsRival += comp.placar.rival;
     somaEstaminaMeu += calcularMediaEstaminaCampo(estado.times.meuTime.jogadores);
     somaEstaminaRival += calcularMediaEstaminaCampo(estado.times.rival.jogadores);
+
+    const estMeu = estado.estatisticas?.meuTime || {};
+    const estRiv = estado.estatisticas?.rival || {};
+    somaPassesTentadosMeu += estMeu.passesTentados || 0;
+    somaPassesCertosMeu += estMeu.passesCertos || 0;
+    somaFinalizacoesMeu += estMeu.finalizacoes || 0;
+    somaFinalizacoesRival += estRiv.finalizacoes || 0;
+    somaInterceptacoesMeu += estMeu.interceptacoes || 0;
+    somaInterceptacoesRival += estRiv.interceptacoes || 0;
+    somaDibresMeu += estMeu.dibresCertos || 0;
+    somaDisputas += (estMeu.disputas || 0) + (estRiv.disputas || 0);
+    somaRebotes += (estMeu.rebotes || 0) + (estRiv.rebotes || 0);
+    somaTraves += (estMeu.traves || 0) + (estRiv.traves || 0);
+    somaBloqueios += (estMeu.bloqueios || 0) + (estRiv.bloqueios || 0);
+    somaDefesasGoleiro += (estMeu.defesasGoleiro || 0) + (estRiv.defesasGoleiro || 0);
   }
 
   const arred2 = (v) => Number(v.toFixed(2));
   const arred1 = (v) => Number(v.toFixed(1));
+  const pctPasseMeu =
+    somaPassesTentadosMeu > 0
+      ? arred1((somaPassesCertosMeu / somaPassesTentadosMeu) * 100)
+      : 0;
 
   return {
     quantidade: total,
     forcaRival: forca,
+    mediaMeuTime: mediaMeu,
     clubeId: mods.clubeId,
     clubeNome: mods.clubeNome,
     tecnicoId: mods.tecnicoId,
@@ -161,5 +211,18 @@ export function simularPartidasEquilibrio({
     mediaGolsRival: arred2(somaGolsRival / total),
     mediaEstaminaFinalMeu: arred1(somaEstaminaMeu / total),
     mediaEstaminaFinalRival: arred1(somaEstaminaRival / total),
+    mediaPassesTentadosMeu: arred2(somaPassesTentadosMeu / total),
+    mediaPassesCertosMeu: arred2(somaPassesCertosMeu / total),
+    pctPasseMeu,
+    mediaFinalizacoesMeu: arred2(somaFinalizacoesMeu / total),
+    mediaFinalizacoesRival: arred2(somaFinalizacoesRival / total),
+    mediaInterceptacoesMeu: arred2(somaInterceptacoesMeu / total),
+    mediaInterceptacoesRival: arred2(somaInterceptacoesRival / total),
+    mediaDibresMeu: arred2(somaDibresMeu / total),
+    mediaDisputas: arred2(somaDisputas / total),
+    mediaRebotes: arred2(somaRebotes / total),
+    mediaTraves: arred2(somaTraves / total),
+    mediaBloqueios: arred2(somaBloqueios / total),
+    mediaDefesasGoleiro: arred2(somaDefesasGoleiro / total),
   };
 }

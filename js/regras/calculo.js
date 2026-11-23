@@ -22,6 +22,7 @@ import {
 import {
   obterAtributoEfetivo,
   obterAtributoEfetivoComBonus,
+  obterEstamina,
   resumirFadigaJogador,
 } from './estamina.js';
 import {
@@ -35,6 +36,12 @@ import {
   obterModificadorPortadorJogador,
   obterReducaoPressaoPortadorPasse,
 } from './habilidades.js';
+import {
+  avaliarContextoPeDominante,
+  avaliarFamiliaridadePosicao,
+  avaliarImpactoConcentracao,
+} from '../jogador/identidade.js';
+import { classificarContextoPasse } from './lances.js';
 
 // ============================================================================
 // Constantes de Calibração (centralizadas no topo para ajuste rápido)
@@ -81,33 +88,35 @@ export const PASSE_CONFIG = Object.freeze({
   pesoPassePassador: 0.5,
   pesoDominioReceptor: 0.25,
   pesoPosicionamentoReceptor: 0.25,
-  fatorAtaque: 0.3,
-  referenciaAtributo: 60,
-  fatorPressaoLinha: 0.3,
-  fatorPressaoPortador: 0.12,
+  fatorAtaque: 0.36,
+  referenciaAtributo: 43,
+  fatorPressaoLinha: 0.26,
+  fatorPressaoPortador: 0.11,
   fatorZonaIntermediaria: 0.35,
 });
 
 export const CONDUCAO_CONFIG = Object.freeze({
-  base: 74,
-  pesoTecnica: 0.4,
-  pesoVelocidade: 0.35,
-  pesoDibre: 0.25,
-  fatorAtaque: 0.32,
-  referenciaAtributo: 60,
+  base: 76,
+  pesoTecnica: 0.35,
+  pesoVelocidade: 0.3,
+  pesoDibre: 0.2,
+  pesoDominio: 0.15,
+  fatorAtaque: 0.38,
+  referenciaAtributo: 44,
   pesoPressao: 1.0,
-  fatorPressao: 0.25,
+  fatorPressao: 0.24,
 });
 
 export const DIBRE_CONFIG = Object.freeze({
-  baseMesmaZona: 74,
-  baseAvanco: 70,
-  pesoDibre: 0.55,
-  pesoTecnica: 0.25,
-  pesoVelocidade: 0.2,
-  referenciaAtributo: 60,
-  fatorAtaque: 0.38,
-  fatorPressaoPortador: 0.22,
+  baseMesmaZona: 75,
+  baseAvanco: 71,
+  pesoDibre: 0.48,
+  pesoTecnica: 0.22,
+  pesoVelocidade: 0.18,
+  pesoDominio: 0.12,
+  referenciaAtributo: 44,
+  fatorAtaque: 0.4,
+  fatorPressaoPortador: 0.23,
   bonusDibreProximaJogada: 12,
   reducaoPressaoPosDibre: 0.5,
   margemFaltaSofrida: 14,
@@ -125,32 +134,33 @@ export const CRUZAMENTO_CONFIG = Object.freeze({
   pesoFinalizacaoCabeceador: 0.55,
   pesoPosicionamentoCabeceador: 0.3,
   pesoDominioCabeceador: 0.15,
-  referenciaAtributo: 60,
-  fatorAtaque: 0.38,
-  fatorGoleiro: 0.18,
+  referenciaAtributo: 44,
+  fatorAtaque: 0.42,
+  fatorGoleiro: 0.2,
   fatorPressaoLinha: 0.12,
   fatorPressaoPortador: 0.08,
   margemEscanteioDefesa: 14,
 });
 
 export const FINALIZACAO_CONFIG = Object.freeze({
-  baseFaixa5Centro: 52,
-  baseFaixa5Lado: 36,
-  baseZ4Centro: 25,
+  baseFaixa5Centro: 53,
+  baseFaixa5Lado: 38,
+  baseZ4Centro: 26,
   basePenalti: 78,
   baseFaltaDireta: 32,
   bonusPotenciaChuteDeFora: 15,
   bonusChuteColocado: 6,
   ajusteChuteBomba: -2,
   bonusReboteArea: 16,
-  pesoFinalizacao: 0.6,
-  pesoTecnica: 0.25,
-  pesoDibre: 0.15,
-  referenciaAtributo: 60,
-  fatorAtaque: 0.44,
-  fatorGoleiro: 0.2,
-  fatorPressaoPortador: 0.08,
-  defesaGoleiroPadrao: 75,
+  pesoFinalizacao: 0.54,
+  pesoTecnica: 0.22,
+  pesoDibre: 0.12,
+  pesoDominio: 0.12,
+  referenciaAtributo: 44,
+  fatorAtaque: 0.46,
+  fatorGoleiro: 0.22,
+  fatorPressaoPortador: 0.09,
+  defesaGoleiroPadrao: 45,
   margemEscanteioDefesa: 16,
   margemReboteDefesa: 14,
 });
@@ -271,8 +281,16 @@ export function calcularPressaoZona(
     if (defensor.ehGoleiro || defensor.extras?.cartoes?.vermelho) continue;
 
     let eficiencia = calcularEficienciaNaZona(defensor, zonaId, bonusAtributosLinha);
-    let forcaPortador = calcularForcaNoPortador(defensor);
-    let forcaLinha = calcularForcaNaLinha(defensor);
+    const reacaoMental = avaliarImpactoConcentracao({
+      jogador: defensor,
+      pressao: 40,
+      estamina: obterEstamina(defensor),
+      dificuldadeLance: 0.45,
+    });
+    let forcaPortador =
+      calcularForcaNoPortador(defensor) * reacaoMental.fatorReacaoDefensiva;
+    let forcaLinha =
+      calcularForcaNaLinha(defensor) * reacaoMental.fatorReacaoDefensiva;
 
     const modInterceptacao = obterModificadorInterceptacaoJogador(defensor);
     if (modInterceptacao.multiplicador !== 1) {
@@ -537,8 +555,57 @@ export function calcularChancePasse({
       pressaoIntermediaria * PASSE_CONFIG.fatorZonaIntermediaria,
   );
 
+  const contextoPasse = classificarContextoPasse({
+    tipoId: tipo.id,
+    zonaOrigem: passador.zona,
+    zonaDestino: receptor.zona,
+    timeId,
+    pressaoOrigem: pressaoPortadorOrigem,
+    pressaoDestino: pressaoLinhaDestino,
+    pressaoIntermediaria,
+  });
+
+  const contextoPe = avaliarContextoPeDominante({
+    jogador: passador,
+    acao: 'passe',
+    zonaOrigem: passador.zona,
+    zonaDestino: receptor.zona,
+    timeId,
+    pressaoOrigem: pressaoPortadorOrigem,
+  });
+
+  const impactoConcentracao = avaliarImpactoConcentracao({
+    jogador: passador,
+    receptor,
+    pressao: Math.max(pressaoPortadorOrigem, pressaoTotalDestino),
+    estamina: obterEstamina(passador),
+    dificuldadeLance: tipo.peso,
+    momentoCritico: ehZonaTercoFinal(receptor.zona, timeId),
+  });
+
+  const familiaridadePassador = avaliarFamiliaridadePosicao(passador);
+  const familiaridadeReceptor = avaliarFamiliaridadePosicao(receptor);
+
+  const ajustesContextuais = [];
+  if (contextoPe.ajusteChance !== 0 && contextoPe.rotuloAjuste) {
+    ajustesContextuais.push({
+      rotulo: contextoPe.rotuloAjuste,
+      valor: contextoPe.ajusteChance,
+    });
+  }
+  if (Math.abs(impactoConcentracao.ajusteChance) >= 0.8) {
+    ajustesContextuais.push({
+      rotulo: `Concentração (${impactoConcentracao.motivo})`,
+      valor: impactoConcentracao.ajusteChance,
+    });
+  }
+
   const bonusPassivos = obterBonusPassivosPasse(passador, tipo.id);
-  const ajustesCompletos = [...ajustesChance, ...bonusPassivos.ajustes];
+  const ajustesCompletos = [
+    ...ajustesChance,
+    ...ajustesContextuais,
+    ...bonusPassivos.ajustes,
+  ];
   const somaAjustes = ajustesCompletos.reduce((acc, item) => acc + item.valor, 0);
 
   const chanceBruta =
@@ -577,6 +644,11 @@ export function calcularChancePasse({
   return {
     acao: 'passe',
     tipo,
+    contextoPasse,
+    contextoPe,
+    impactoConcentracao,
+    familiaridadePassador,
+    familiaridadeReceptor,
     base: tipo.base,
     peso: tipo.peso,
     ataque: arredondar1(ataqueBruto),
@@ -588,7 +660,7 @@ export function calcularChancePasse({
     pressaoIntermediaria,
     pressaoTotal: arredondar1(pressaoTotalDestino),
     ajustesChance: ajustesCompletos,
-    somaAjustes,
+    somaAjustes: arredondar1(somaAjustes),
     habilidadeAtivaId: habilidadeAtiva?.id || null,
     habilidadesAplicadas,
     jogadoresFadiga: [
@@ -642,14 +714,36 @@ export function calcularChanceConducao({
   const ataqueBruto =
     obterAtributoEfetivo(portador, 'tecnica') * CONDUCAO_CONFIG.pesoTecnica +
     obterAtributoEfetivo(portador, 'velocidade') * CONDUCAO_CONFIG.pesoVelocidade +
-    obterAtributoEfetivo(portador, 'dibre') * (CONDUCAO_CONFIG.pesoDibre || 0);
+    obterAtributoEfetivo(portador, 'dibre') * (CONDUCAO_CONFIG.pesoDibre || 0) +
+    obterAtributoEfetivo(portador, 'dominio') * (CONDUCAO_CONFIG.pesoDominio || 0);
 
   const base = ehArrancada
     ? habilidadeAtiva.efeito.baseChance
     : CONDUCAO_CONFIG.base;
 
+  const impactoConcentracao = avaliarImpactoConcentracao({
+    jogador: portador,
+    pressao: pressaoPortadorDestino,
+    estamina: obterEstamina(portador),
+    dificuldadeLance: ehArrancada ? 0.75 : 0.5,
+    momentoCritico: ehZonaTercoFinal(zonaDestino, timeId),
+  });
+  const familiaridadePortador = avaliarFamiliaridadePosicao(portador);
+
+  const ajustesContextuais = [];
+  if (Math.abs(impactoConcentracao.ajusteChance) >= 0.8) {
+    ajustesContextuais.push({
+      rotulo: `Concentração (${impactoConcentracao.motivo})`,
+      valor: impactoConcentracao.ajusteChance,
+    });
+  }
+
   const bonusPassivosCond = obterBonusPassivosConducao(portador);
-  const ajustesCompletos = [...ajustesChance, ...bonusPassivosCond.ajustes];
+  const ajustesCompletos = [
+    ...ajustesChance,
+    ...ajustesContextuais,
+    ...bonusPassivosCond.ajustes,
+  ];
   const somaAjustes = ajustesCompletos.reduce((acc, item) => acc + item.valor, 0);
 
   const chanceBruta =
@@ -700,6 +794,8 @@ export function calcularChanceConducao({
       base,
       peso: CONDUCAO_CONFIG.pesoPressao,
     },
+    impactoConcentracao,
+    familiaridadePortador,
     deltaFaixa,
     base,
     peso: CONDUCAO_CONFIG.pesoPressao,
@@ -710,7 +806,7 @@ export function calcularChanceConducao({
     pressaoIntermediaria: 0,
     pressaoTotal: pressaoPortadorDestino,
     ajustesChance: ajustesCompletos,
-    somaAjustes,
+    somaAjustes: arredondar1(somaAjustes),
     habilidadeAtivaId: habilidadeAtiva?.id || null,
     habilidadesAplicadas,
     jogadoresFadiga: [resumirFadigaJogador(portador, 'Portador')].filter(Boolean),
@@ -758,12 +854,34 @@ export function calcularChanceDibre({
   const ataqueBruto =
     obterAtributoEfetivo(portador, 'dibre') * DIBRE_CONFIG.pesoDibre +
     obterAtributoEfetivo(portador, 'tecnica') * DIBRE_CONFIG.pesoTecnica +
-    obterAtributoEfetivo(portador, 'velocidade') * DIBRE_CONFIG.pesoVelocidade;
+    obterAtributoEfetivo(portador, 'velocidade') * DIBRE_CONFIG.pesoVelocidade +
+    obterAtributoEfetivo(portador, 'dominio') * (DIBRE_CONFIG.pesoDominio || 0);
 
   const base = ehMesmaZona ? DIBRE_CONFIG.baseMesmaZona : DIBRE_CONFIG.baseAvanco;
 
+  const impactoConcentracao = avaliarImpactoConcentracao({
+    jogador: portador,
+    pressao: pressaoPortadorAlvo,
+    estamina: obterEstamina(portador),
+    dificuldadeLance: 0.72,
+    momentoCritico: ehZonaTercoFinal(zonaDestino, timeId),
+  });
+  const familiaridadePortador = avaliarFamiliaridadePosicao(portador);
+
+  const ajustesContextuais = [];
+  if (Math.abs(impactoConcentracao.ajusteChance) >= 0.8) {
+    ajustesContextuais.push({
+      rotulo: `Concentração (${impactoConcentracao.motivo})`,
+      valor: impactoConcentracao.ajusteChance,
+    });
+  }
+
   const bonusPassivosCond = obterBonusPassivosConducao(portador);
-  const ajustesCompletos = [...ajustesChance, ...bonusPassivosCond.ajustes];
+  const ajustesCompletos = [
+    ...ajustesChance,
+    ...ajustesContextuais,
+    ...bonusPassivosCond.ajustes,
+  ];
   const somaAjustes = ajustesCompletos.reduce((acc, item) => acc + item.valor, 0);
 
   const chanceBruta =
@@ -806,6 +924,8 @@ export function calcularChanceDibre({
       base,
       peso: 1,
     },
+    impactoConcentracao,
+    familiaridadePortador,
     ehMesmaZona,
     deltaFaixa,
     base,
@@ -817,7 +937,7 @@ export function calcularChanceDibre({
     pressaoIntermediaria: 0,
     pressaoTotal: pressaoPortadorAlvo,
     ajustesChance: ajustesCompletos,
-    somaAjustes,
+    somaAjustes: arredondar1(somaAjustes),
     habilidadeAtivaId: null,
     habilidadesAplicadas,
     jogadoresFadiga: [resumirFadigaJogador(portador, 'Driblador')].filter(Boolean),
@@ -898,10 +1018,46 @@ export function calcularChanceCruzamento({
   const defesaGoleiro =
     defesaGoleiroBase + (bonusDefesaGoleiro || 0) + (reflexoGoleiro.bonusDefesa || 0);
 
+  const contextoPe = avaliarContextoPeDominante({
+    jogador: passador,
+    acao: 'cruzar',
+    zonaOrigem: passador.zona,
+    zonaDestino: receptor.zona,
+    timeId,
+    pressaoOrigem: pressaoPortadorOrigem,
+  });
+
+  const impactoConcentracao = avaliarImpactoConcentracao({
+    jogador: receptor,
+    receptor: passador,
+    pressao: Math.max(pressaoPortadorOrigem, pressaoLinhaDestino),
+    estamina: obterEstamina(receptor),
+    dificuldadeLance: 0.8,
+    momentoCritico: true,
+  });
+
+  const familiaridadePassador = avaliarFamiliaridadePosicao(passador);
+  const familiaridadeReceptor = avaliarFamiliaridadePosicao(receptor);
+
+  const ajustesContextuais = [];
+  if (contextoPe.ajusteChance !== 0 && contextoPe.rotuloAjuste) {
+    ajustesContextuais.push({
+      rotulo: contextoPe.rotuloAjuste,
+      valor: contextoPe.ajusteChance,
+    });
+  }
+  if (Math.abs(impactoConcentracao.ajusteChance) >= 0.8) {
+    ajustesContextuais.push({
+      rotulo: `Concentração (${impactoConcentracao.motivo})`,
+      valor: impactoConcentracao.ajusteChance,
+    });
+  }
+
   const bonusPassivosFin = obterBonusPassivosFinalizacao(receptor);
   const bonusPassivosPasse = obterBonusPassivosPasse(passador, 'longo');
   const ajustesCompletos = [
     ...ajustesChance,
+    ...ajustesContextuais,
     ...bonusPassivosFin.ajustes,
     ...bonusPassivosPasse.ajustes,
   ];
@@ -952,6 +1108,10 @@ export function calcularChanceCruzamento({
       base,
       peso: 1,
     },
+    contextoPe,
+    impactoConcentracao,
+    familiaridadePassador,
+    familiaridadeReceptor,
     ehLinhaDeFundo,
     base,
     peso: 1,
@@ -964,7 +1124,7 @@ export function calcularChanceCruzamento({
     pressaoIntermediaria: 0,
     pressaoTotal: pressaoLinhaDestino,
     ajustesChance: ajustesCompletos,
-    somaAjustes,
+    somaAjustes: arredondar1(somaAjustes),
     habilidadeAtivaId: null,
     habilidadesAplicadas,
     jogadoresFadiga: [
@@ -1049,13 +1209,49 @@ export function calcularChanceFinalizacao({
   const ataqueBruto =
     obterAtributoEfetivo(atacante, 'finalizacao') * FINALIZACAO_CONFIG.pesoFinalizacao +
     obterAtributoEfetivo(atacante, 'tecnica') * FINALIZACAO_CONFIG.pesoTecnica +
-    obterAtributoEfetivo(atacante, 'dibre') * (FINALIZACAO_CONFIG.pesoDibre || 0);
+    obterAtributoEfetivo(atacante, 'dibre') * (FINALIZACAO_CONFIG.pesoDibre || 0) +
+    obterAtributoEfetivo(atacante, 'dominio') * (FINALIZACAO_CONFIG.pesoDominio || 0);
   const defesaGoleiroBase = goleiro
     ? obterAtributoEfetivo(goleiro, 'defesa')
     : FINALIZACAO_CONFIG.defesaGoleiroPadrao;
   const reflexoGoleiro = obterBonusPassivoDefesaGoleiro(goleiro);
   const defesaGoleiro =
     defesaGoleiroBase + (bonusDefesaGoleiro || 0) + (reflexoGoleiro.bonusDefesa || 0);
+
+  const contextoPe =
+    modoBolaParada === 'penalti'
+      ? { ajusteChance: 0, peUsado: 'dominante', rotuloAjuste: null, detalhe: 'Pênalti com pé bom' }
+      : avaliarContextoPeDominante({
+          jogador: atacante,
+          acao: 'finalizar',
+          zonaOrigem: atacante.zona,
+          timeId,
+          pressaoOrigem: pressaoPortadorZona,
+        });
+
+  const impactoConcentracao = avaliarImpactoConcentracao({
+    jogador: atacante,
+    pressao: pressaoPortadorZona,
+    estamina: obterEstamina(atacante),
+    dificuldadeLance: modoBolaParada === 'penalti' ? 0.9 : 0.85,
+    momentoCritico: true,
+  });
+
+  const familiaridadeAtacante = avaliarFamiliaridadePosicao(atacante);
+
+  const ajustesContextuais = [];
+  if (contextoPe.ajusteChance !== 0 && contextoPe.rotuloAjuste) {
+    ajustesContextuais.push({
+      rotulo: contextoPe.rotuloAjuste,
+      valor: contextoPe.ajusteChance,
+    });
+  }
+  if (Math.abs(impactoConcentracao.ajusteChance) >= 0.8) {
+    ajustesContextuais.push({
+      rotulo: `Concentração (${impactoConcentracao.motivo})`,
+      valor: impactoConcentracao.ajusteChance,
+    });
+  }
 
   const bonusPassivosFin = obterBonusPassivosFinalizacao(atacante);
   const extraChuteFora = ehChuteDeFora
@@ -1083,6 +1279,7 @@ export function calcularChanceFinalizacao({
 
   const ajustesCompletos = [
     ...ajustesChance,
+    ...ajustesContextuais,
     ...extraChuteFora,
     ...extraTipoChute,
     ...bonusPassivosFin.ajustes,
@@ -1134,6 +1331,9 @@ export function calcularChanceFinalizacao({
       base,
       peso: 1,
     },
+    contextoPe,
+    impactoConcentracao,
+    familiaridadeAtacante,
     modoBolaParada,
     tipoChute,
     base,
@@ -1147,7 +1347,7 @@ export function calcularChanceFinalizacao({
     pressaoIntermediaria: 0,
     pressaoTotal: pressaoPortadorZona,
     ajustesChance: ajustesCompletos,
-    somaAjustes,
+    somaAjustes: arredondar1(somaAjustes),
     habilidadeAtivaId: habilidadeAtiva?.id || null,
     habilidadesAplicadas,
     jogadoresFadiga: [

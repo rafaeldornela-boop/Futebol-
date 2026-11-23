@@ -13,6 +13,8 @@ import { TIMES_PADRAO } from '../dados/times.js';
 import { LISTA_HABILIDADES, jogadorPodeTerHabilidade } from '../dados/habilidades.js';
 import { criarInstanciaHabilidade } from '../regras/habilidades.js';
 import { CAMPANHA_CONFIG } from './constantes.js';
+import { calcularAvaliacaoPosicional } from '../jogador/identidade.js';
+import { garantirDesenvolvimentoJogador } from '../jogador/desenvolvimento.js';
 
 export const ATRIBUTOS_LINHA = Object.freeze([
   'passe',
@@ -36,10 +38,11 @@ export const ROTULOS_ATRIBUTOS = Object.freeze({
   desarme: 'Desarme',
   velocidade: 'Velocidade',
   tecnica: 'Técnica',
-  dibre: 'Dibre',
+  dibre: 'Drible',
   finalizacao: 'Finalização',
   agressividade: 'Agressividade',
   defesa: 'Defesa',
+  concentracao: 'Concentração',
 });
 
 const NOMES_RIVAIS = Object.freeze([
@@ -109,45 +112,47 @@ export function ajustarAtributoClamped(jogador, atributo, delta) {
   const antes = jogador.atributos[atributo];
   const depois = Math.max(1, Math.min(100, antes + delta));
   jogador.atributos[atributo] = depois;
+  if (atributo === 'concentracao' && jogador.mental) {
+    jogador.mental.concentracao = depois;
+  }
   return depois - antes;
 }
 
 /**
- * Calcula a média geral de um jogador (usada para força de mercado e base da campanha).
+ * Calcula a avaliação funcional posicional de um jogador (ponderada pela função).
  */
 export function calcularMediaJogador(jogador) {
-  if (!jogador?.atributos) return 60;
-  const chaves = jogador.ehGoleiro
-    ? ['defesa', 'posicionamento', 'passe', 'dominio', 'interceptacao']
-    : ATRIBUTOS_LINHA;
-  let soma = 0;
-  let qtd = 0;
-  for (const c of chaves) {
-    if (typeof jogador.atributos[c] === 'number') {
-      soma += jogador.atributos[c];
-      qtd += 1;
-    }
-  }
-  return qtd > 0 ? soma / qtd : 60;
+  if (!jogador?.atributos) return 45;
+  return calcularAvaliacaoPosicional(jogador);
 }
 
 /**
- * Média dos 11 titulares iniciais do Atlético Brisa.
+ * Média funcional dos 11 titulares iniciais do elenco.
  */
 export function calcularMediaTitularesInicial(elenco) {
   const titulares = elenco.slice(0, 11);
-  if (titulares.length === 0) return 70;
+  if (titulares.length === 0) return 45;
   const soma = titulares.reduce((acc, j) => acc + calcularMediaJogador(j), 0);
   return Math.round((soma / titulares.length) * 10) / 10;
 }
 
 /**
- * Valor de mercado (100 a 400) proporcional à força do jogador e número de habilidades.
+ * Valor de mercado (100 a 400) proporcional à capacidade atual, potencial (em jovens) e habilidades.
  */
 export function calcularValorMercadoJogador(jogador) {
   const media = calcularMediaJogador(jogador);
-  const bonusHab = (jogador.extras?.habilidades?.length || 0) * 20;
-  const bruto = 100 + ((media - 60) / 30) * 260 + bonusHab;
+  const idade = jogador?.idade ?? 24;
+  const potencial = typeof jogador?.potencial === 'number' ? jogador.potencial : media;
+  const bonusHab = (jogador?.extras?.habilidades?.length || 0) * 18;
+  const margemPotencial = Math.max(0, potencial - media);
+  const bonusPotencial =
+    idade <= 21
+      ? margemPotencial * 1.9
+      : idade <= 24
+        ? margemPotencial * 1.0
+        : 0;
+  // Escala calibrada: media 40 -> ~105, 50 -> ~160, 60 -> ~235, 70 -> ~320, 78+ -> ~400
+  const bruto = 100 + Math.max(0, media - 38) * 6.8 + bonusPotencial + bonusHab;
   return Math.max(
     CAMPANHA_CONFIG.mercadoPrecoMin,
     Math.min(CAMPANHA_CONFIG.mercadoPrecoMax, Math.round(bruto / 5) * 5),
@@ -196,7 +201,7 @@ export function criarElencoInicialCampanha(mods = null) {
       }
     }
 
-    return jogador;
+    return garantirDesenvolvimentoJogador(jogador);
   });
   return todos;
 }
@@ -219,18 +224,19 @@ export function calcularForcaAlvoCamada(
     CAMPANHA_CONFIG.rivalGanhoPorCamada * camada +
     (ehChefao ? CAMPANHA_CONFIG.rivalBonusChefao : 0) +
     (Number(bonusDificuldade) || 0);
-  return Math.round(Math.max(50, Math.min(100, base)) * 10) / 10;
+  return Math.round(Math.max(34, Math.min(96, base)) * 10) / 10;
 }
 
 /**
- * Gera um time rival completo (11 titulares + 7 reservas em 4-3-3) para uma camada/nó.
+ * Gera um time rival completo (11 titulares + 7 reservas) para uma camada/nó,
+ * com variância real de atributos por função e identidade individual.
  */
 export function gerarRivalPorCamada({
   seed,
   noId,
   camada,
   ehChefao = false,
-  mediaInicialTitulares = 71,
+  mediaInicialTitulares = 46,
   forcaPersonalizada = null,
   bonusDificuldade = 0,
   formacao = FORMACAO_PADRAO,
@@ -252,34 +258,58 @@ export function gerarRivalPorCamada({
   const chanceHab = ehChefao ? 0.85 : Math.min(0.75, 0.2 + camada * 0.05);
 
   const gerarAtributosEscalados = (ehGoleiro, papel) => {
+    // Cada jogador do rival varia individualmente em torno da força do time (-5..+5)
+    // Deslocamento base (-4) compensa os vieses positivos dos atributos principais da posição
+    // para que a avaliação funcional real do rival bata com `forcaAlvo`.
+    const offsetIndividual = inteiroAleatorio(-5, 5, rng);
+    const baseAlvo = forcaAlvo - 4;
     const sortearAttr = (bias = 0) =>
       Math.max(
-        20,
-        Math.min(99, Math.round(forcaAlvo + bias + inteiroAleatorio(-variacao, variacao, rng))),
+        18,
+        Math.min(
+          98,
+          Math.round(baseAlvo + offsetIndividual + bias + inteiroAleatorio(-variacao, variacao, rng)),
+        ),
       );
 
     const ehZagueiro = papel?.startsWith('ZAG');
     const ehLateral = papel?.startsWith('LAT') || papel?.startsWith('ALA');
     const ehVol = papel?.startsWith('VOL');
     const ehMeia = papel?.startsWith('MEI');
-    const ehAta =
-      papel?.startsWith('PONTA') || papel?.startsWith('ATA') || papel === 'CA';
+    const ehPonta = papel?.startsWith('PONTA');
+    const ehAta = ehPonta || papel?.startsWith('ATA') || papel === 'CA';
+
+    if (ehGoleiro) {
+      return {
+        passe: sortearAttr(-10),
+        dominio: sortearAttr(-10),
+        posicionamento: sortearAttr(3),
+        marcacao: sortearAttr(-20),
+        interceptacao: sortearAttr(-6),
+        desarme: sortearAttr(-20),
+        velocidade: sortearAttr(-14),
+        tecnica: sortearAttr(-12),
+        dibre: sortearAttr(-22),
+        finalizacao: sortearAttr(-26),
+        agressividade: inteiroAleatorio(18, 34, rng),
+        concentracao: sortearAttr(3),
+        defesa: sortearAttr(5),
+      };
+    }
 
     return {
-      passe: sortearAttr(ehMeia || ehVol ? 3 : 0),
-      dominio: sortearAttr(ehMeia || ehAta ? 2 : 0),
-      posicionamento: sortearAttr(2),
-      marcacao: sortearAttr(ehZagueiro || ehVol ? 4 : ehAta ? -12 : 0),
-      interceptacao: sortearAttr(ehZagueiro || ehVol ? 3 : ehAta ? -10 : 0),
-      desarme: sortearAttr(ehZagueiro || ehVol ? 4 : ehAta ? -12 : 0),
-      velocidade: sortearAttr(
-        ehLateral || papel?.startsWith('PONTA') ? 5 : 0,
-      ),
-      tecnica: sortearAttr(ehMeia || ehAta ? 3 : -2),
-      dibre: sortearAttr(ehAta || ehMeia ? 4 : ehLateral ? 2 : -4),
-      finalizacao: sortearAttr(ehAta ? 5 : ehZagueiro ? -15 : -4),
-      agressividade: sortearAttr(-8),
-      ...(ehGoleiro ? { defesa: sortearAttr(6) } : {}),
+      passe: sortearAttr(ehMeia ? 7 : ehVol ? 4 : ehZagueiro ? -8 : ehAta ? -5 : 0),
+      dominio: sortearAttr(ehMeia || ehAta ? 4 : ehZagueiro ? -9 : 0),
+      posicionamento: sortearAttr(ehZagueiro || ehVol || papel === 'CA' ? 4 : 0),
+      marcacao: sortearAttr(ehZagueiro ? 7 : ehVol ? 5 : ehLateral ? 1 : ehAta ? -20 : -11),
+      interceptacao: sortearAttr(ehVol ? 6 : ehZagueiro ? 5 : ehAta ? -18 : -8),
+      desarme: sortearAttr(ehZagueiro ? 7 : ehVol ? 5 : ehLateral ? 1 : ehAta ? -20 : -11),
+      velocidade: sortearAttr(ehPonta ? 10 : ehLateral ? 7 : ehZagueiro ? -10 : ehVol ? -6 : 0),
+      tecnica: sortearAttr(ehMeia ? 7 : ehPonta ? 6 : ehZagueiro ? -12 : 0),
+      dibre: sortearAttr(ehPonta ? 10 : ehMeia ? 6 : ehLateral ? 2 : ehZagueiro ? -18 : -2),
+      finalizacao: sortearAttr(papel === 'CA' ? 10 : ehAta ? 5 : ehMeia ? 0 : ehZagueiro ? -22 : -12),
+      agressividade: inteiroAleatorio(28, 74, rng),
+      concentracao: sortearAttr(ehZagueiro || ehVol ? 3 : ehPonta ? -4 : 0),
     };
   };
 
@@ -318,6 +348,18 @@ export function gerarRivalPorCamada({
         ehTitular && POSICOES_NATURAIS_PAPEL[j.papel]?.[0]
           ? POSICOES_NATURAIS_PAPEL[j.papel][0]
           : j.posicao;
+      const attrs = gerarAtributosEscalados(j.ehGoleiro, j.papel);
+      const peRoll = rng();
+      const peDominante =
+        posNatural === 'LE'
+          ? 'esquerdo'
+          : posNatural === 'LD'
+            ? 'direito'
+            : peRoll < 0.08
+              ? 'ambidestro'
+              : peRoll < 0.34
+                ? 'esquerdo'
+                : 'direito';
       const novo = {
         ...j,
         posicao: posNatural,
@@ -325,7 +367,11 @@ export function gerarRivalPorCamada({
         id: `${prefixoId}_${noId}_${idx}`,
         nome,
         nomeCurto,
-        atributos: gerarAtributosEscalados(j.ehGoleiro, j.papel),
+        idade: inteiroAleatorio(19, 32, rng),
+        peDominante,
+        qualidadePeFraco: peDominante === 'ambidestro' ? 5 : inteiroAleatorio(1, 4, rng),
+        atributos: attrs,
+        mental: { concentracao: attrs.concentracao },
         extras: {
           estamina: 100,
           habilidades: [],
@@ -334,7 +380,7 @@ export function gerarRivalPorCamada({
         },
       };
       novo.extras.habilidades = sortearHabilidades(novo);
-      return novo;
+      return garantirDesenvolvimentoJogador(novo);
     });
 
   return {
@@ -430,6 +476,9 @@ export function carregarCampanha(storage = globalThis?.localStorage) {
     const parsed = JSON.parse(bruto);
     if (!parsed || !parsed.seed || !Array.isArray(parsed.elenco) || !parsed.mapa) {
       return null;
+    }
+    for (const j of parsed.elenco) {
+      garantirDesenvolvimentoJogador(j);
     }
     return parsed;
   } catch {

@@ -34,6 +34,7 @@ import {
   obterMultiplicadorDeslocamentoPostura,
   POSTURA_PADRAO,
 } from '../regras/postura.js';
+import { avaliarFamiliaridadePosicao } from '../jogador/identidade.js';
 
 // ============================================================================
 // Constantes de Calibração (centralizadas no topo)
@@ -435,8 +436,14 @@ export function ehPosicaoNatural(jogador, papel) {
 
 export function atualizarStatusPosicaoJogador(jogador) {
   if (!jogador) return false;
-  const fora = !ehPosicaoNatural(jogador, jogador.papel);
+  const naturalPeloPapel = ehPosicaoNatural(jogador, jogador.papel);
+  const fam = avaliarFamiliaridadePosicao(jogador, jogador.papel);
+  const fora = !naturalPeloPapel || fam.foraDePosicao;
   jogador.foraDePosicao = fora;
+  jogador.familiaridadeAtual = {
+    ...fam,
+    foraDePosicao: fora,
+  };
   return fora;
 }
 

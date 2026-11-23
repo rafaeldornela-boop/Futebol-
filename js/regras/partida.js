@@ -76,6 +76,12 @@ import {
   podeTrocarPosturaPartida,
   POSTURA_PADRAO,
 } from './postura.js';
+import { garantirDesenvolvimentoJogador } from '../jogador/desenvolvimento.js';
+import {
+  narrarLance,
+  resolverDisputaBola,
+  TIPOS_DESFECHO_TECNICO,
+} from './lances.js';
 
 export const TURNOS_POR_LADO = 16;
 
@@ -168,6 +174,10 @@ export function sincronizarPosicoesTurno(
  */
 export function criarPartida(timesPersonalizados = null, opcoes = {}) {
   const times = timesPersonalizados ? structuredClone(timesPersonalizados) : clonarTimesPadrao();
+  for (const lado of ['meuTime', 'rival']) {
+    for (const j of times[lado]?.jogadores || []) garantirDesenvolvimentoJogador(j);
+    for (const j of times[lado]?.reservas || []) garantirDesenvolvimentoJogador(j);
+  }
   inicializarHabilidadesTimes(times);
   const zagueiroInicial = encontrarJogadorSaida(times.meuTime);
   const modsMeta =
@@ -248,6 +258,12 @@ export function criarPartida(timesPersonalizados = null, opcoes = {}) {
         interceptacoes: 0,
         dibresCertos: 0,
         cruzamentos: 0,
+        disputas: 0,
+        bolasDivididas: 0,
+        traves: 0,
+        bloqueios: 0,
+        rebotes: 0,
+        defesasGoleiro: 0,
       },
       rival: {
         passesCertos: 0,
@@ -256,6 +272,12 @@ export function criarPartida(timesPersonalizados = null, opcoes = {}) {
         interceptacoes: 0,
         dibresCertos: 0,
         cruzamentos: 0,
+        disputas: 0,
+        bolasDivididas: 0,
+        traves: 0,
+        bloqueios: 0,
+        rebotes: 0,
+        defesasGoleiro: 0,
       },
     },
     extensoes: {
@@ -1110,7 +1132,7 @@ export function aplicarOrdemDefensiva(
       trocouJogada: false,
       gastosOrdem: [],
       intencaoFinal: defesa.intencaoAtual,
-      texto: `Marcação mantida. ${defesa.intencaoAtual.passador.nomeCurto} prepara ${defesa.intencaoAtual.calculo.tipo.rotulo.toLowerCase()} (${defesa.intencaoAtual.calculo.chance}%).`,
+      texto: `Marcação mantida. ${defesa.intencaoAtual.passador.nomeCurto} prepara ${defesa.intencaoAtual.calculo.tipo.rotulo.toLowerCase()}.`,
     };
   }
 
@@ -1139,7 +1161,7 @@ export function aplicarOrdemDefensiva(
     defesa.gastosOrdem = gastosRegistrados;
 
     const sorteioCartao = sortearD100(rng);
-    let textoCartao = 'Sem cartão.';
+    let textoCartao = 'O árbitro só adverte verbalmente.';
     let cartaoAplicado = null;
 
     if (marcador && sorteioCartao <= chanceAmarelo) {
@@ -1152,10 +1174,10 @@ export function aplicarOrdemDefensiva(
         textoCartao = `Cartão vermelho! ${marcador.nomeCurto} recebe o 2º amarelo e está expulso.`;
       } else {
         cartaoAplicado = 'amarelo';
-        textoCartao = `Cartão amarelo para ${marcador.nomeCurto} (${chanceAmarelo}%, sorteio ${sorteioCartao}).`;
+        textoCartao = `Cartão amarelo para ${marcador.nomeCurto}.`;
       }
     } else if (marcador) {
-      textoCartao = `${marcador.nomeCurto} escapa do cartão (${chanceAmarelo}%, sorteio ${sorteioCartao}).`;
+      textoCartao = `${marcador.nomeCurto} escapa do cartão.`;
     }
 
     defesa.bolaParada = true;
@@ -1168,7 +1190,7 @@ export function aplicarOrdemDefensiva(
       cartao: cartaoAplicado,
     };
 
-    // Reinicia o turno do rival com bola parada (+10 em passes)
+    // Reinicia o turno do rival com bola parada
     sincronizarPosicoesTurno(estado, { cobrarDeslocamento: false });
     const novaEscolha = escolherNovaJogadaRival
       ? escolherNovaJogadaRival(estado, rng)
@@ -1178,7 +1200,7 @@ export function aplicarOrdemDefensiva(
     defesa.trocouJogada = true;
     defesa.fase = 'pronto_execucao';
 
-    const texto = `Falta tática de ${marcador?.nomeCurto || 'marcador'} (−8 est.)! ${textoCartao} Rival reinicia com bola parada (+10% em passes).`;
+    const texto = `Falta tática de ${marcador?.nomeCurto || 'marcador'} para matar a jogada! ${textoCartao} O rival reinicia na bola parada.`;
     estado.ultimaJogada = {
       tipo: 'falta',
       time: 'meuTime',
@@ -1290,8 +1312,8 @@ export function aplicarOrdemDefensiva(
     : rotulosOrdem[tipoOrdem] || tipoOrdem;
 
   const resumoMudanca = trocou
-    ? `Chance caiu abaixo de 35% e o rival mudou para ${intencaoFinal.passador.nomeCurto} → ${intencaoFinal.receptor ? intencaoFinal.receptor.nomeCurto : intencaoFinal.zonaDestino} (${intencaoFinal.calculo.chance}%).`
-    : `Chance recalculada para ${intencaoFinal.calculo.chance}%.`;
+    ? `A marcação apertou a linha e o rival mudou o plano para ${intencaoFinal.passador.nomeCurto} → ${intencaoFinal.receptor ? intencaoFinal.receptor.nomeCurto : intencaoFinal.zonaDestino}.`
+    : `A marcação se ajustou em cima do lance rival.`;
 
   const texto = `Ordem: ${rotuloOrdem}! ${resumoMudanca}`;
   estado.ultimaJogada = {
@@ -1571,85 +1593,282 @@ export function executarJogada(
   const sorteio = sortearD100(rng);
   const chance = calculo.chance;
   const limiteErroExecucao = chance + MARGEM_ERRO_EXECUCAO;
-
-  const prefixoHab = habilidadeAtiva ? `[${habilidadeAtiva.nome}] ` : '';
-  const sufixoVooRival = vooRivalAtivado
-    ? ` (${vooRivalAtivado.jogadorNome} ativou Voo +${vooRivalAtivado.bonusDefesa} def.!)`
-    : '';
+  const sementeNarracao =
+    sorteio + estado.turnosJogados.meuTime * 7 + estado.turnosJogados.rival * 11;
 
   let resultado;
   let ativouContraAtaque = false;
+  let desfechoTecnico = null;
+  let disputaInfo = null;
+
+  const narrar = (params) =>
+    narrarLance({
+      acao,
+      passador,
+      receptor,
+      zonaOrigem: previaEfetiva.zonaOrigem,
+      zonaDestino,
+      timeAtacanteId: idAtacante,
+      timeDefensorNome: timeDefensor.nome,
+      habilidadeNome: habilidadeAtiva?.nome || null,
+      contextoPasse: calculo.contextoPasse || null,
+      vooGoleiroNome: vooRivalAtivado?.jogadorNome || null,
+      semente: sementeNarracao,
+      ...params,
+    });
 
   if (acao === 'passe') {
     estado.estatisticas[idAtacante].passesTentados += 1;
+    const estAtacante = estado.estatisticas[idAtacante];
+    const estDefensor = estado.estatisticas[idDefensor];
 
     if (sorteio <= chance) {
-      estado.estatisticas[idAtacante].passesCertos += 1;
-      const tipoId = calculo.tipo?.id || 'curto';
-      const foiDaLinhaDeFundo =
-        ehZonaLinhaDeFundo(previaEfetiva.zonaOrigem, idAtacante) &&
-        ehZonaTercoFinal(receptor.zona, idAtacante);
+      const pressaoDest = calculo.pressaoDestino ?? 0;
+      const estabilidadeReceptor =
+        calculo.impactoConcentracao?.fatorEstabilidade ?? 1;
+      const dominioReceptor = obterAtributoEfetivo(receptor, 'dominio');
+      const dominioPressionadoFalhou =
+        pressaoDest >= 56 &&
+        sorteio > chance - 4 &&
+        (dominioReceptor < 40 || estabilidadeReceptor < 0.96);
 
-      if (foiDaLinhaDeFundo && estado.bonusCruzamento) {
-        estado.bonusCruzamento[idAtacante] = true;
-      }
+      if (dominioPressionadoFalhou) {
+        estAtacante.disputas = (estAtacante.disputas || 0) + 1;
+        estAtacante.bolasDivididas = (estAtacante.bolasDivididas || 0) + 1;
+        const marcadorLocal = escolherInterceptadorNaZona(timeDefensor, receptor.zona);
+        disputaInfo = resolverDisputaBola({
+          jogadoresAtaque: timeAtacante.jogadores,
+          jogadoresDefesa: timeDefensor.jogadores,
+          zonaDisputa: receptor.zona,
+          preferidoAtaque: receptor,
+          preferidoDefesa: marcadorLocal,
+          vantagemAtaque: 4,
+          rng,
+        });
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.DOMINIO_RUIM;
 
-      if (
-        tipoId === 'frente' ||
-        tipoId === 'longo' ||
-        tipoId === 'invertido' ||
-        ehZonaTercoFinal(receptor.zona, idAtacante)
-      ) {
-        ganharImpeto(estado, idAtacante, 1);
-      }
+        if (disputaInfo.vencedorLado === 'ataque') {
+          estAtacante.passesCertos += 1;
+          const dono = disputaInfo.vencedor || receptor;
+          resultado = {
+            tipo: 'acerto',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino: receptor.zona,
+            desfecho: 'Domínio difícil — mantido na dividida',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: marcadorLocal,
+              vencedorDisputa: dono,
+              zonaDestino: receptor.zona,
+            }),
+          };
+          concluirTurno(estado, idAtacante, receptor.zona, dono.id, rngHabilidade);
+        } else {
+          estDefensor.interceptacoes += 1;
+          zerarImpeto(estado, idAtacante);
+          ganharImpeto(estado, idDefensor, 1);
+          const vencedorDef = disputaInfo.vencedor || marcadorLocal;
+          ativouContraAtaque = verificarAtivacaoContraAtaque(
+            estadoSnapshotAntes,
+            'interceptacao',
+            idDefensor,
+          );
+          if (ativouContraAtaque) {
+            if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+            else estado.bonusContraAtaqueRival = true;
+          }
+          resultado = {
+            tipo: 'interceptacao',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino: receptor.zona,
+            desfecho: 'Domínio ruim — perda na dividida',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: marcadorLocal,
+              vencedorDisputa: vencedorDef,
+              zonaDestino: receptor.zona,
+              ativouContraAtaque,
+            }),
+          };
+          concluirTurno(estado, idDefensor, receptor.zona, vencedorDef.id, rngHabilidade);
+        }
+      } else {
+        estAtacante.passesCertos += 1;
+        const tipoId = calculo.tipo?.id || 'curto';
+        const foiDaLinhaDeFundo =
+          ehZonaLinhaDeFundo(previaEfetiva.zonaOrigem, idAtacante) &&
+          ehZonaTercoFinal(receptor.zona, idAtacante);
 
-      const notaLinhaDeFundo = foiDaLinhaDeFundo
-        ? ' Passe da linha de fundo (+15% para finalizar de primeira)!'
-        : '';
+        if (foiDaLinhaDeFundo && estado.bonusCruzamento) {
+          estado.bonusCruzamento[idAtacante] = true;
+        }
 
-      resultado = {
-        tipo: 'acerto',
-        acao,
-        time: idAtacante,
-        sorteio,
-        chance,
-        zonaOrigem: previaEfetiva.zonaOrigem,
-        zonaDestino: receptor.zona,
-        desfecho: 'Acerto',
-        texto: `${prefixoHab}${passador.nomeCurto} acertou passe ${calculo.tipo.rotulo.toLowerCase()} para ${receptor.nomeCurto} em ${receptor.zona} (${chance}%, sorteio ${sorteio}).${notaLinhaDeFundo}`,
-      };
-      concluirTurno(estado, idAtacante, receptor.zona, receptor.id, rngHabilidade);
-    } else if (sorteio <= limiteErroExecucao) {
-      zerarImpeto(estado, idAtacante);
-      const saida = descreverSaidaDeBola(zonaDestino, idAtacante);
-      const zonaReinicio = obterZonaReinicioRival(zonaDestino, saida.tipo, idDefensor);
-      const cobradorRival =
-        saida.tipo === 'tiro-de-meta'
-          ? encontrarGoleiro(timeDefensor)
-          : encontrarJogadorNaOuPertoDaZona(timeDefensor, zonaReinicio, {
-              ignorarGoleiro: true,
-            });
-      if (saida.tipo === 'escanteio') {
-        estado.bolaParadaContexto = {
-          tipo: 'escanteio',
-          time: idDefensor,
-          zona: zonaReinicio,
+        if (
+          tipoId === 'frente' ||
+          tipoId === 'longo' ||
+          tipoId === 'invertido' ||
+          ehZonaTercoFinal(receptor.zona, idAtacante)
+        ) {
+          ganharImpeto(estado, idAtacante, 1);
+        }
+
+        desfechoTecnico =
+          sorteio <= Math.round(chance * 0.42)
+            ? TIPOS_DESFECHO_TECNICO.PASSE_PERFEITO
+            : sorteio >= chance - 7 || pressaoDest >= 45
+              ? TIPOS_DESFECHO_TECNICO.PASSE_DIFICIL
+              : TIPOS_DESFECHO_TECNICO.PASSE_BOM;
+
+        resultado = {
+          tipo: 'acerto',
+          desfechoTecnico,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino: receptor.zona,
+          desfecho:
+            desfechoTecnico === TIPOS_DESFECHO_TECNICO.PASSE_PERFEITO
+              ? 'Passe perfeito'
+              : desfechoTecnico === TIPOS_DESFECHO_TECNICO.PASSE_DIFICIL
+                ? 'Passe difícil concluído'
+                : 'Passe certo',
+          texto: narrar({
+            desfechoTecnico,
+            zonaDestino: receptor.zona,
+            foiDaLinhaDeFundo,
+          }),
         };
+        concluirTurno(estado, idAtacante, receptor.zona, receptor.id, rngHabilidade);
       }
-      resultado = {
-        tipo: saida.tipo,
-        acao,
-        time: idAtacante,
-        sorteio,
-        chance,
-        zonaOrigem: previaEfetiva.zonaOrigem,
-        zonaDestino,
-        desfecho: `Erro de execução (${saida.rotulo})`,
-        texto: `${prefixoHab}Erro de execução! Passe de ${passador.nomeCurto} saiu em ${saida.rotulo} na zona ${zonaDestino} (chance ${chance}%, sorteio ${sorteio}). Posse com ${timeDefensor.nome}.`,
-      };
-      concluirTurno(estado, idDefensor, zonaReinicio, cobradorRival.id, rngHabilidade);
+    } else if (sorteio <= limiteErroExecucao) {
+      const pressaoDest = calculo.pressaoDestino ?? 0;
+      const desviouNaLinha =
+        pressaoDest >= 30 &&
+        sorteio <= chance + Math.round(MARGEM_ERRO_EXECUCAO * 0.45);
+
+      if (desviouNaLinha) {
+        estAtacante.disputas = (estAtacante.disputas || 0) + 1;
+        estAtacante.bolasDivididas = (estAtacante.bolasDivididas || 0) + 1;
+        const marcadorLocal = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+        disputaInfo = resolverDisputaBola({
+          jogadoresAtaque: timeAtacante.jogadores,
+          jogadoresDefesa: timeDefensor.jogadores,
+          zonaDisputa: zonaDestino,
+          preferidoAtaque: receptor,
+          preferidoDefesa: marcadorLocal,
+          vantagemAtaque: -4,
+          rng,
+        });
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.PASSE_DESVIADO;
+
+        if (disputaInfo.vencedorLado === 'ataque') {
+          const vencedorAtq = disputaInfo.vencedor || receptor;
+          resultado = {
+            tipo: 'disputa',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino,
+            desfecho: 'Passe desviado — ataque fica com a segunda bola',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: marcadorLocal,
+              vencedorDisputa: vencedorAtq,
+            }),
+          };
+          concluirTurno(estado, idAtacante, zonaDestino, vencedorAtq.id, rngHabilidade);
+        } else {
+          estDefensor.interceptacoes += 1;
+          zerarImpeto(estado, idAtacante);
+          ganharImpeto(estado, idDefensor, 1);
+          const vencedorDef = disputaInfo.vencedor || marcadorLocal;
+          ativouContraAtaque = verificarAtivacaoContraAtaque(
+            estadoSnapshotAntes,
+            'interceptacao',
+            idDefensor,
+          );
+          if (ativouContraAtaque) {
+            if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+            else estado.bonusContraAtaqueRival = true;
+          }
+          resultado = {
+            tipo: 'interceptacao',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino,
+            desfecho: 'Passe desviado — defesa vence disputa',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: marcadorLocal,
+              vencedorDisputa: vencedorDef,
+              ativouContraAtaque,
+            }),
+          };
+          concluirTurno(estado, idDefensor, zonaDestino, vencedorDef.id, rngHabilidade);
+        }
+      } else {
+        zerarImpeto(estado, idAtacante);
+        const saida = descreverSaidaDeBola(zonaDestino, idAtacante);
+        const zonaReinicio = obterZonaReinicioRival(zonaDestino, saida.tipo, idDefensor);
+        const cobradorRival =
+          saida.tipo === 'tiro-de-meta'
+            ? encontrarGoleiro(timeDefensor)
+            : encontrarJogadorNaOuPertoDaZona(timeDefensor, zonaReinicio, {
+                ignorarGoleiro: true,
+              });
+        if (saida.tipo === 'escanteio') {
+          estado.bolaParadaContexto = {
+            tipo: 'escanteio',
+            time: idDefensor,
+            zona: zonaReinicio,
+          };
+        }
+        desfechoTecnico =
+          calculo.tipo?.id === 'longo' || calculo.tipo?.id === 'invertido'
+            ? TIPOS_DESFECHO_TECNICO.PASSE_FORTE
+            : TIPOS_DESFECHO_TECNICO.ERRO_EXECUCAO;
+        resultado = {
+          tipo: saida.tipo,
+          desfechoTecnico,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino,
+          desfecho: `Erro de execução (${saida.rotulo})`,
+          texto: narrar({
+            desfechoTecnico,
+            saidaRotulo: saida.rotulo,
+          }),
+        };
+        concluirTurno(estado, idDefensor, zonaReinicio, cobradorRival.id, rngHabilidade);
+      }
     } else {
-      estado.estatisticas[idDefensor].interceptacoes += 1;
+      estDefensor.interceptacoes += 1;
       zerarImpeto(estado, idAtacante);
       ganharImpeto(estado, idDefensor, 1);
       const interceptador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
@@ -1662,8 +1881,10 @@ export function executarJogada(
         if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
         else estado.bonusContraAtaqueRival = true;
       }
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.INTERCEPTACAO;
       resultado = {
         tipo: 'interceptacao',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -1671,58 +1892,147 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino,
         desfecho: 'Interceptação',
-        texto: `${prefixoHab}${interceptador.nomeCurto} interceptou o passe de ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado na próxima jogada!' : ''}`,
+        texto: narrar({
+          desfechoTecnico,
+          defensor: interceptador,
+          ativouContraAtaque,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaDestino, interceptador.id, rngHabilidade);
     }
   } else if (acao === 'conduzir') {
+    const estAtacante = estado.estatisticas[idAtacante];
+    const estDefensor = estado.estatisticas[idDefensor];
+
     if (sorteio <= chance) {
       if ((calculo.deltaFaixa ?? 0) > 0 || ehZonaTercoFinal(zonaDestino, idAtacante)) {
         ganharImpeto(estado, idAtacante, 1);
       }
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.VANTAGEM_CRIADA;
       resultado = {
         tipo: 'conducao',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
         chance,
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino,
-        desfecho: 'Acerto',
-        texto: `${prefixoHab}${passador.nomeCurto} conduziu a bola até ${zonaDestino} (${chance}%, sorteio ${sorteio}).`,
+        desfecho: 'Condução limpa',
+        texto: narrar({ desfechoTecnico }),
       };
       concluirTurno(estado, idAtacante, zonaDestino, passador.id, rngHabilidade);
     } else if (sorteio <= limiteErroExecucao) {
-      zerarImpeto(estado, idAtacante);
-      const saida = descreverSaidaDeBola(zonaDestino, idAtacante);
-      const zonaReinicio = obterZonaReinicioRival(zonaDestino, saida.tipo, idDefensor);
-      const cobradorRival =
-        saida.tipo === 'tiro-de-meta'
-          ? encontrarGoleiro(timeDefensor)
-          : encontrarJogadorNaOuPertoDaZona(timeDefensor, zonaReinicio, {
-              ignorarGoleiro: true,
-            });
-      if (saida.tipo === 'escanteio') {
-        estado.bolaParadaContexto = {
-          tipo: 'escanteio',
-          time: idDefensor,
-          zona: zonaReinicio,
+      const pressaoDest = calculo.pressaoDestino ?? 0;
+      const bolaDividida =
+        pressaoDest >= 32 &&
+        sorteio <= chance + Math.round(MARGEM_ERRO_EXECUCAO * 0.45);
+
+      if (bolaDividida) {
+        estAtacante.disputas = (estAtacante.disputas || 0) + 1;
+        estAtacante.bolasDivididas = (estAtacante.bolasDivididas || 0) + 1;
+        const marcadorLocal = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+        disputaInfo = resolverDisputaBola({
+          jogadoresAtaque: timeAtacante.jogadores,
+          jogadoresDefesa: timeDefensor.jogadores,
+          zonaDisputa: zonaDestino,
+          preferidoAtaque: passador,
+          preferidoDefesa: marcadorLocal,
+          vantagemAtaque: -2,
+          rng,
+        });
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.BOLA_SOLTA;
+        if (disputaInfo.vencedorLado === 'ataque') {
+          const dono = disputaInfo.vencedor || passador;
+          resultado = {
+            tipo: 'disputa',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino,
+            desfecho: 'Bola dividida — ataque segue com a posse',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: marcadorLocal,
+              vencedorDisputa: dono,
+            }),
+          };
+          concluirTurno(estado, idAtacante, zonaDestino, dono.id, rngHabilidade);
+        } else {
+          estDefensor.interceptacoes += 1;
+          zerarImpeto(estado, idAtacante);
+          ganharImpeto(estado, idDefensor, 1);
+          const vencedorDef = disputaInfo.vencedor || marcadorLocal;
+          ativouContraAtaque = verificarAtivacaoContraAtaque(
+            estadoSnapshotAntes,
+            'desarme',
+            idDefensor,
+          );
+          if (ativouContraAtaque) {
+            if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+            else estado.bonusContraAtaqueRival = true;
+          }
+          resultado = {
+            tipo: 'interceptacao',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino,
+            desfecho: 'Bola solta — defesa vence dividida',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: marcadorLocal,
+              vencedorDisputa: vencedorDef,
+              ativouContraAtaque,
+            }),
+          };
+          concluirTurno(estado, idDefensor, zonaDestino, vencedorDef.id, rngHabilidade);
+        }
+      } else {
+        zerarImpeto(estado, idAtacante);
+        const saida = descreverSaidaDeBola(zonaDestino, idAtacante);
+        const zonaReinicio = obterZonaReinicioRival(zonaDestino, saida.tipo, idDefensor);
+        const cobradorRival =
+          saida.tipo === 'tiro-de-meta'
+            ? encontrarGoleiro(timeDefensor)
+            : encontrarJogadorNaOuPertoDaZona(timeDefensor, zonaReinicio, {
+                ignorarGoleiro: true,
+              });
+        if (saida.tipo === 'escanteio') {
+          estado.bolaParadaContexto = {
+            tipo: 'escanteio',
+            time: idDefensor,
+            zona: zonaReinicio,
+          };
+        }
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.ERRO_EXECUCAO;
+        resultado = {
+          tipo: saida.tipo,
+          desfechoTecnico,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino,
+          desfecho: `Erro de execução (${saida.rotulo})`,
+          texto: narrar({
+            desfechoTecnico,
+            saidaRotulo: saida.rotulo,
+          }),
         };
+        concluirTurno(estado, idDefensor, zonaReinicio, cobradorRival.id, rngHabilidade);
       }
-      resultado = {
-        tipo: saida.tipo,
-        acao,
-        time: idAtacante,
-        sorteio,
-        chance,
-        zonaOrigem: previaEfetiva.zonaOrigem,
-        zonaDestino,
-        desfecho: `Erro de execução (${saida.rotulo})`,
-        texto: `${prefixoHab}Erro na condução! ${passador.nomeCurto} adiantou demais e a bola saiu em ${saida.rotulo} (chance ${chance}%, sorteio ${sorteio}). Posse com ${timeDefensor.nome}.`,
-      };
-      concluirTurno(estado, idDefensor, zonaReinicio, cobradorRival.id, rngHabilidade);
     } else {
-      estado.estatisticas[idDefensor].interceptacoes += 1;
+      estDefensor.interceptacoes += 1;
       zerarImpeto(estado, idAtacante);
       ganharImpeto(estado, idDefensor, 1);
       const desarmador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
@@ -1735,8 +2045,10 @@ export function executarJogada(
         if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
         else estado.bonusContraAtaqueRival = true;
       }
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.DESARME;
       resultado = {
         tipo: 'interceptacao',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -1744,20 +2056,26 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino,
         desfecho: 'Desarme',
-        texto: `${prefixoHab}${desarmador.nomeCurto} desarmou ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado na próxima jogada!' : ''}`,
+        texto: narrar({
+          desfechoTecnico,
+          defensor: desarmador,
+          ativouContraAtaque,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaDestino, desarmador.id, rngHabilidade);
     }
   } else if (acao === 'dibrar') {
+    const estAtacante = estado.estatisticas[idAtacante];
+    const estDefensor = estado.estatisticas[idDefensor];
     const faixaAlvo = obterFaixa(zonaDestino, idAtacante);
     const margemFalta =
       DIBRE_CONFIG.margemFaltaSofrida +
       (faixaAlvo >= 4 ? DIBRE_CONFIG.bonusMargemFaltaTercoFinal : 0);
     const limiteFaltaDibre = chance + margemFalta;
+    const limiteDivididaDibre = limiteFaltaDibre + 10;
 
     if (sorteio <= chance) {
-      estado.estatisticas[idAtacante].dibresCertos =
-        (estado.estatisticas[idAtacante].dibresCertos || 0) + 1;
+      estAtacante.dibresCertos = (estAtacante.dibresCertos || 0) + 1;
       if (!estado.bonusDibre) estado.bonusDibre = { meuTime: false, rival: false };
       estado.bonusDibre[idAtacante] = true;
       ganharImpeto(estado, idAtacante, 1);
@@ -1767,20 +2085,25 @@ export function executarJogada(
         gastarEstamina(marcadorBatido, 3);
       }
 
-      const movTexto =
-        zonaDestino === previaEfetiva.zonaOrigem
-          ? `em ${zonaDestino}`
-          : `avançando para ${zonaDestino}`;
+      desfechoTecnico =
+        sorteio <= Math.round(chance * 0.5)
+          ? TIPOS_DESFECHO_TECNICO.DRIBLE_LIMPO
+          : TIPOS_DESFECHO_TECNICO.DEFENSOR_DESLOCADO;
+
       resultado = {
         tipo: 'dibre',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
         chance,
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino,
-        desfecho: 'Dibre certeiro! (+12% próx.)',
-        texto: `DIBRE! ${passador.nomeCurto} entortou ${marcadorBatido?.nomeCurto || 'a marcação'} ${movTexto} (${chance}%, sorteio ${sorteio})! Próxima jogada com +12% e −50% de pressão!`,
+        desfecho: 'Drible limpo — vantagem aberta',
+        texto: narrar({
+          desfechoTecnico,
+          defensor: marcadorBatido,
+        }),
       };
       concluirTurno(estado, idAtacante, zonaDestino, passador.id, rngHabilidade);
     } else if (
@@ -1795,8 +2118,10 @@ export function executarJogada(
           time: idAtacante,
           zona: zonaPenalti,
         };
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.PENALTI;
         resultado = {
           tipo: 'penalti',
+          desfechoTecnico,
           acao,
           time: idAtacante,
           sorteio,
@@ -1804,7 +2129,11 @@ export function executarJogada(
           zonaOrigem: previaEfetiva.zonaOrigem,
           zonaDestino: zonaPenalti,
           desfecho: 'Pênalti sofrido!',
-          texto: `PÊNALTI! ${passador.nomeCurto} partiu pro dibre na área (${zonaDestino}) e foi derrubado por ${marcadorFalta?.nomeCurto || 'defensor'} (chance ${chance}%, sorteio ${sorteio})! Bola na marca da cal!`,
+          texto: narrar({
+            desfechoTecnico,
+            defensor: marcadorFalta,
+            zonaDestino: zonaPenalti,
+          }),
         };
         concluirTurno(estado, idAtacante, zonaPenalti, passador.id, rngHabilidade);
       } else {
@@ -1813,8 +2142,13 @@ export function executarJogada(
           time: idAtacante,
           zona: zonaDestino,
         };
+        desfechoTecnico =
+          faixaAlvo >= 3
+            ? TIPOS_DESFECHO_TECNICO.FALTA_PERIGOSA
+            : TIPOS_DESFECHO_TECNICO.FALTA;
         resultado = {
           tipo: 'falta',
+          desfechoTecnico,
           acao,
           time: idAtacante,
           sorteio,
@@ -1822,12 +2156,83 @@ export function executarJogada(
           zonaOrigem: previaEfetiva.zonaOrigem,
           zonaDestino,
           desfecho: faixaAlvo >= 3 ? 'Falta perigosa sofrida!' : 'Falta sofrida',
-          texto: `Falta em ${passador.nomeCurto}! ${marcadorFalta?.nomeCurto || 'O marcador'} chegou atrasado no dibre em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio}). Bola parada para ${timeAtacante.nome}!`,
+          texto: narrar({
+            desfechoTecnico,
+            defensor: marcadorFalta,
+          }),
         };
         concluirTurno(estado, idAtacante, zonaDestino, passador.id, rngHabilidade);
       }
+    } else if (sorteio <= limiteDivididaDibre && sorteio < 96) {
+      estAtacante.disputas = (estAtacante.disputas || 0) + 1;
+      estAtacante.bolasDivididas = (estAtacante.bolasDivididas || 0) + 1;
+      const marcadorLocal = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+      disputaInfo = resolverDisputaBola({
+        jogadoresAtaque: timeAtacante.jogadores,
+        jogadoresDefesa: timeDefensor.jogadores,
+        zonaDisputa: zonaDestino,
+        preferidoAtaque: passador,
+        preferidoDefesa: marcadorLocal,
+        vantagemAtaque: -3,
+        rng,
+      });
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.BOLA_ESCAPANDO;
+      if (disputaInfo.vencedorLado === 'ataque') {
+        const dono = disputaInfo.vencedor || passador;
+        resultado = {
+          tipo: 'disputa',
+          desfechoTecnico,
+          disputa: disputaInfo,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino,
+          desfecho: 'Toque do marcador — ataque ganha dividida',
+          texto: narrar({
+            desfechoTecnico,
+            defensor: marcadorLocal,
+            vencedorDisputa: dono,
+          }),
+        };
+        concluirTurno(estado, idAtacante, zonaDestino, dono.id, rngHabilidade);
+      } else {
+        estDefensor.interceptacoes += 1;
+        zerarImpeto(estado, idAtacante);
+        ganharImpeto(estado, idDefensor, 1);
+        const vencedorDef = disputaInfo.vencedor || marcadorLocal;
+        ativouContraAtaque = verificarAtivacaoContraAtaque(
+          estadoSnapshotAntes,
+          'desarme',
+          idDefensor,
+        );
+        if (ativouContraAtaque) {
+          if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+          else estado.bonusContraAtaqueRival = true;
+        }
+        resultado = {
+          tipo: 'interceptacao',
+          desfechoTecnico,
+          disputa: disputaInfo,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino,
+          desfecho: 'Bola escapou — defesa fica com a dividida',
+          texto: narrar({
+            desfechoTecnico,
+            defensor: marcadorLocal,
+            vencedorDisputa: vencedorDef,
+            ativouContraAtaque,
+          }),
+        };
+        concluirTurno(estado, idDefensor, zonaDestino, vencedorDef.id, rngHabilidade);
+      }
     } else {
-      estado.estatisticas[idDefensor].interceptacoes += 1;
+      estDefensor.interceptacoes += 1;
       zerarImpeto(estado, idAtacante);
       ganharImpeto(estado, idDefensor, 1);
       const desarmador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
@@ -1840,39 +2245,46 @@ export function executarJogada(
         if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
         else estado.bonusContraAtaqueRival = true;
       }
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.DESARME;
       resultado = {
         tipo: 'interceptacao',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
         chance,
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino,
-        desfecho: 'Desarme no dibre',
-        texto: `${desarmador.nomeCurto} leu o dibre e desarmou ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado!' : ''}`,
+        desfecho: 'Desarme no drible',
+        texto: narrar({
+          desfechoTecnico,
+          defensor: desarmador,
+          ativouContraAtaque,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaDestino, desarmador.id, rngHabilidade);
     }
   } else if (acao === 'cruzar') {
-    estado.estatisticas[idAtacante].passesTentados += 1;
-    estado.estatisticas[idAtacante].finalizacoes += 1;
-    estado.estatisticas[idAtacante].cruzamentos =
-      (estado.estatisticas[idAtacante].cruzamentos || 0) + 1;
+    const estAtacante = estado.estatisticas[idAtacante];
+    const estDefensor = estado.estatisticas[idDefensor];
+    estAtacante.passesTentados += 1;
+    estAtacante.finalizacoes += 1;
+    estAtacante.cruzamentos = (estAtacante.cruzamentos || 0) + 1;
     const goleiroRival = encontrarGoleiro(timeDefensor);
     const limiteEscanteio = chance + CRUZAMENTO_CONFIG.margemEscanteioDefesa;
+    const limiteDesvioArea = limiteErroExecucao + 12;
 
     if (sorteio <= chance) {
-      estado.estatisticas[idAtacante].passesCertos += 1;
+      estAtacante.passesCertos += 1;
       estado.placar[idAtacante] += 1;
       ganharImpeto(estado, idAtacante, 1);
       zerarImpeto(estado, idDefensor);
       const saidaRival = encontrarJogadorSaida(timeDefensor);
       const zonaSaida = idDefensor === 'rival' ? 'Z5-C' : 'Z1-C';
-      const origTxt = calculo.ehLinhaDeFundo
-        ? `da linha de fundo (${passador.zona})`
-        : `de ${passador.zona}`;
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.GOL;
       resultado = {
         tipo: 'gol',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -1880,13 +2292,17 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino: obterZonaGolAlvo(idAtacante),
         desfecho: 'GOL DE CABEÇA!',
-        texto: `GOL! ${passador.nomeCurto} cruzou na medida ${origTxt} e ${receptor.nomeCurto} testou firme em ${receptor.zona} para vencer ${goleiroRival.nomeCurto} (chance ${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+        texto: narrar({
+          desfechoTecnico,
+          goleiro: goleiroRival,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaSaida, saidaRival.id, rngHabilidade);
     } else if (
       sorteio <= limiteEscanteio &&
       estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado
     ) {
+      estDefensor.defesasGoleiro = (estDefensor.defesasGoleiro || 0) + 1;
       const corredorOrig = obterCorredor(passador.zona, idAtacante);
       const zonaEscPV = corredorOrig === 'D' ? 'Z5-D' : 'Z5-E';
       const zonaEscanteio = converterDoPontoDeVista(zonaEscPV, idAtacante);
@@ -1895,8 +2311,10 @@ export function executarJogada(
         time: idAtacante,
         zona: zonaEscanteio,
       };
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.ESCANTEIO;
       resultado = {
         tipo: 'escanteio',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -1904,13 +2322,19 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino: zonaEscanteio,
         desfecho: 'Espalmou p/ Escanteio!',
-        texto: `Defesaça de ${goleiroRival.nomeCurto}! ${receptor.nomeCurto} cabeceou após cruzamento de ${passador.nomeCurto} e o goleiro espalmou para ESCANTEIO em ${zonaEscanteio} (${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+        texto: narrar({
+          desfechoTecnico,
+          goleiro: goleiroRival,
+          zonaDestino: zonaEscanteio,
+        }),
       };
       concluirTurno(estado, idAtacante, zonaEscanteio, passador.id, rngHabilidade);
     } else if (sorteio <= limiteErroExecucao) {
       const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.PARA_FORA;
       resultado = {
         tipo: 'tiro-de-meta',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -1918,16 +2342,79 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino: obterZonaGolAlvo(idAtacante),
         desfecho: 'Cabeceio para fora',
-        texto: `${passador.nomeCurto} cruzou na área e ${receptor.nomeCurto} cabeceou raspando o travessão! Tiro de meta para ${goleiroRival.nomeCurto} (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
+        texto: narrar({
+          desfechoTecnico,
+          goleiro: goleiroRival,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
+    } else if (sorteio <= limiteDesvioArea && sorteio < 96) {
+      estAtacante.disputas = (estAtacante.disputas || 0) + 1;
+      estAtacante.bolasDivididas = (estAtacante.bolasDivididas || 0) + 1;
+      const cortador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+      disputaInfo = resolverDisputaBola({
+        jogadoresAtaque: timeAtacante.jogadores,
+        jogadoresDefesa: timeDefensor.jogadores,
+        zonaDisputa: zonaDestino,
+        preferidoAtaque: receptor,
+        preferidoDefesa: cortador,
+        vantagemAtaque: 0,
+        rng,
+      });
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.DESVIO;
+      if (disputaInfo.vencedorLado === 'ataque') {
+        const dono = disputaInfo.vencedor || receptor;
+        resultado = {
+          tipo: 'disputa',
+          desfechoTecnico,
+          disputa: disputaInfo,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino,
+          desfecho: 'Corte parcial — sobra viva na área',
+          texto: narrar({
+            desfechoTecnico,
+            defensor: cortador,
+            vencedorDisputa: dono,
+          }),
+        };
+        concluirTurno(estado, idAtacante, zonaDestino, dono.id, rngHabilidade);
+      } else {
+        estDefensor.interceptacoes += 1;
+        zerarImpeto(estado, idAtacante);
+        ganharImpeto(estado, idDefensor, 1);
+        const vencedorDef = disputaInfo.vencedor || cortador;
+        resultado = {
+          tipo: 'interceptacao',
+          desfechoTecnico,
+          disputa: disputaInfo,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino,
+          desfecho: 'Corte parcial — defesa ganha a segunda bola',
+          texto: narrar({
+            desfechoTecnico,
+            defensor: cortador,
+            vencedorDisputa: vencedorDef,
+          }),
+        };
+        concluirTurno(estado, idDefensor, zonaDestino, vencedorDef.id, rngHabilidade);
+      }
     } else {
-      estado.estatisticas[idDefensor].interceptacoes += 1;
+      estDefensor.interceptacoes += 1;
       zerarImpeto(estado, idAtacante);
       ganharImpeto(estado, idDefensor, 1);
       const cortador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.CORTE;
       resultado = {
         tipo: 'interceptacao',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -1935,24 +2422,19 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino,
         desfecho: 'Corte da zaga',
-        texto: `${cortador.nomeCurto} subiu mais alto em ${zonaDestino} e afastou o cruzamento de ${passador.nomeCurto} (${chance}%, sorteio ${sorteio})!`,
+        texto: narrar({
+          desfechoTecnico,
+          defensor: cortador,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaDestino, cortador.id, rngHabilidade);
     }
   } else if (acao === 'finalizar') {
-    estado.estatisticas[idAtacante].finalizacoes += 1;
+    const estAtacante = estado.estatisticas[idAtacante];
+    const estDefensor = estado.estatisticas[idDefensor];
+    estAtacante.finalizacoes += 1;
     const goleiroRival = encontrarGoleiro(timeDefensor);
     const tipoChute = calculo.tipoChute || previaEfetiva.tipoChute || 'padrao';
-    const tagModo =
-      calculo.modoBolaParada === 'penalti'
-        ? '[Pênalti] '
-        : calculo.modoBolaParada === 'falta_direta'
-          ? '[Falta Direta] '
-          : tipoChute === 'bomba'
-            ? '[Bomba] '
-            : tipoChute === 'colocado'
-              ? '[Colocado] '
-              : prefixoHab;
 
     const margemErroChute =
       tipoChute === 'colocado' ? 8 : MARGEM_ERRO_EXECUCAO;
@@ -1978,8 +2460,10 @@ export function executarJogada(
       zerarImpeto(estado, idDefensor);
       const saidaRival = encontrarJogadorSaida(timeDefensor);
       const zonaSaida = idDefensor === 'rival' ? 'Z5-C' : 'Z1-C';
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.GOL;
       resultado = {
         tipo: 'gol',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -1987,29 +2471,210 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino: obterZonaGolAlvo(idAtacante),
         desfecho: 'GOL!',
-        texto: `${tagModo}GOL! ${passador.nomeCurto} finalizou de ${passador.zona} e venceu ${goleiroRival.nomeCurto} (chance ${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+        texto: narrar({
+          desfechoTecnico,
+          goleiro: goleiroRival,
+          tipoChute,
+          modoBolaParada: calculo.modoBolaParada || null,
+          zonaDestino: previaEfetiva.zonaOrigem,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaSaida, saidaRival.id, rngHabilidade);
     } else if (sorteio <= limiteParaFora) {
-      const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
-      resultado = {
-        tipo: 'tiro-de-meta',
-        acao,
-        time: idAtacante,
-        sorteio,
-        chance,
-        zonaOrigem: previaEfetiva.zonaOrigem,
-        zonaDestino: obterZonaGolAlvo(idAtacante),
-        desfecho: 'Para fora (tiro de meta)',
-        texto: `${tagModo}${passador.nomeCurto} finalizou para fora! Tiro de meta para ${goleiroRival.nomeCurto} (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
-      };
-      concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
+      const pressaoChute = calculo.pressaoPortadorOrigem ?? 0;
+      const acertouTrave =
+        calculo.modoBolaParada !== 'penalti' && sorteio <= chance + 4;
+      const chuteBloqueado =
+        !acertouTrave &&
+        calculo.modoBolaParada !== 'penalti' &&
+        pressaoChute >= 42 &&
+        sorteio <= chance + 10;
+
+      if (acertouTrave) {
+        estAtacante.traves = (estAtacante.traves || 0) + 1;
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.BOLA_NA_TRAVE;
+        if (
+          atacantesNaArea.length > 0 &&
+          estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado &&
+          rng() < 0.45
+        ) {
+          estAtacante.disputas = (estAtacante.disputas || 0) + 1;
+          disputaInfo = resolverDisputaBola({
+            jogadoresAtaque: timeAtacante.jogadores,
+            jogadoresDefesa: timeDefensor.jogadores,
+            zonaDisputa: zonaAreaCentro,
+            preferidoAtaque: atacantesNaArea[0],
+            vantagemAtaque: 2,
+            rng,
+          });
+          const ataqueFicou = disputaInfo.vencedorLado === 'ataque';
+          const dono = disputaInfo.vencedor || (ataqueFicou ? atacantesNaArea[0] : goleiroRival);
+          resultado = {
+            tipo: ataqueFicou ? 'trave' : 'interceptacao',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino: zonaAreaCentro,
+            desfecho: ataqueFicou
+              ? 'Na trave — sobra na área!'
+              : 'Na trave — defesa afasta a sobra',
+            texto: narrar({
+              desfechoTecnico,
+              goleiro: goleiroRival,
+              vencedorDisputa: dono,
+            }),
+          };
+          concluirTurno(
+            estado,
+            ataqueFicou ? idAtacante : idDefensor,
+            zonaAreaCentro,
+            dono.id,
+            rngHabilidade,
+          );
+        } else {
+          const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
+          resultado = {
+            tipo: 'trave',
+            desfechoTecnico,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino: obterZonaGolAlvo(idAtacante),
+            desfecho: 'Bola na trave!',
+            texto: narrar({
+              desfechoTecnico,
+              goleiro: goleiroRival,
+            }),
+          };
+          concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
+        }
+      } else if (chuteBloqueado) {
+        estDefensor.bloqueios = (estDefensor.bloqueios || 0) + 1;
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.BLOQUEIO;
+        const bloqueador = escolherInterceptadorNaZona(
+          timeDefensor,
+          previaEfetiva.zonaOrigem,
+        );
+        if (
+          estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado &&
+          rng() < 0.5
+        ) {
+          const corredorChute = obterCorredor(passador.zona, idAtacante);
+          const zonaEscPV = corredorChute === 'D' ? 'Z5-D' : 'Z5-E';
+          const zonaEscanteio = converterDoPontoDeVista(zonaEscPV, idAtacante);
+          const cobradorEsc = encontrarJogadorNaOuPertoDaZona(timeAtacante, zonaEscanteio, {
+            ignorarGoleiro: true,
+          });
+          estado.bolaParadaContexto = {
+            tipo: 'escanteio',
+            time: idAtacante,
+            zona: zonaEscanteio,
+          };
+          resultado = {
+            tipo: 'escanteio',
+            desfechoTecnico,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino: zonaEscanteio,
+            desfecho: 'Chute bloqueado — escanteio',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: bloqueador,
+              saidaRotulo: 'escanteio',
+            }),
+          };
+          concluirTurno(estado, idAtacante, zonaEscanteio, cobradorEsc.id, rngHabilidade);
+        } else {
+          estAtacante.disputas = (estAtacante.disputas || 0) + 1;
+          disputaInfo = resolverDisputaBola({
+            jogadoresAtaque: timeAtacante.jogadores,
+            jogadoresDefesa: timeDefensor.jogadores,
+            zonaDisputa: previaEfetiva.zonaOrigem,
+            preferidoAtaque: passador,
+            preferidoDefesa: bloqueador,
+            vantagemAtaque: -4,
+            rng,
+          });
+          const ataqueFicou = disputaInfo.vencedorLado === 'ataque';
+          const dono = disputaInfo.vencedor || (ataqueFicou ? passador : bloqueador);
+          if (!ataqueFicou) {
+            zerarImpeto(estado, idAtacante);
+            ganharImpeto(estado, idDefensor, 1);
+            ativouContraAtaque = verificarAtivacaoContraAtaque(
+              estadoSnapshotAntes,
+              'desarme',
+              idDefensor,
+            );
+            if (ativouContraAtaque) {
+              if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+              else estado.bonusContraAtaqueRival = true;
+            }
+          }
+          resultado = {
+            tipo: ataqueFicou ? 'bloqueio' : 'interceptacao',
+            desfechoTecnico,
+            disputa: disputaInfo,
+            acao,
+            time: idAtacante,
+            sorteio,
+            chance,
+            zonaOrigem: previaEfetiva.zonaOrigem,
+            zonaDestino: previaEfetiva.zonaOrigem,
+            desfecho: ataqueFicou
+              ? 'Chute bloqueado — sobra com ataque'
+              : 'Chute bloqueado pela zaga',
+            texto: narrar({
+              desfechoTecnico,
+              defensor: bloqueador,
+              vencedorDisputa: dono,
+              ativouContraAtaque,
+            }),
+          };
+          concluirTurno(
+            estado,
+            ataqueFicou ? idAtacante : idDefensor,
+            previaEfetiva.zonaOrigem,
+            dono.id,
+            rngHabilidade,
+          );
+        }
+      } else {
+        const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
+        desfechoTecnico = TIPOS_DESFECHO_TECNICO.PARA_FORA;
+        resultado = {
+          tipo: 'tiro-de-meta',
+          desfechoTecnico,
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino: obterZonaGolAlvo(idAtacante),
+          desfecho: 'Para fora (tiro de meta)',
+          texto: narrar({
+            desfechoTecnico,
+            goleiro: goleiroRival,
+          }),
+        };
+        concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
+      }
     } else if (
       sorteio <= limiteRebote &&
       calculo.modoBolaParada !== 'penalti' &&
       atacantesNaArea.length > 0 &&
       estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado
     ) {
+      estAtacante.rebotes = (estAtacante.rebotes || 0) + 1;
+      estDefensor.defesasGoleiro = (estDefensor.defesasGoleiro || 0) + 1;
       const pegadorRebote =
         atacantesNaArea.find((j) => j.zona === zonaAreaCentro) ||
         atacantesNaArea[0];
@@ -2017,8 +2682,10 @@ export function executarJogada(
       if (estado.bonusRebote) {
         estado.bonusRebote[idAtacante] = true;
       }
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.REBOTE;
       resultado = {
         tipo: 'rebote',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -2026,13 +2693,19 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino: zonaAreaCentro,
         desfecho: 'Rebote na área!',
-        texto: `${tagModo}${goleiroRival.nomeCurto} defendeu no susto e soltou na pequena área! ${pegadorRebote.nomeCurto} ficou com a sobra em ${zonaAreaCentro} (+16% na finalização)!${sufixoVooRival}`,
+        texto: narrar({
+          desfechoTecnico,
+          goleiro: goleiroRival,
+          vencedorDisputa: pegadorRebote,
+          zonaDestino: zonaAreaCentro,
+        }),
       };
       concluirTurno(estado, idAtacante, zonaAreaCentro, pegadorRebote.id, rngHabilidade);
     } else if (
       sorteio <= limiteEscanteio &&
       estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado
     ) {
+      estDefensor.defesasGoleiro = (estDefensor.defesasGoleiro || 0) + 1;
       const corredorChute = obterCorredor(passador.zona, idAtacante);
       const zonaEscPV = corredorChute === 'D' ? 'Z5-D' : 'Z5-E';
       const zonaEscanteio = converterDoPontoDeVista(zonaEscPV, idAtacante);
@@ -2044,8 +2717,10 @@ export function executarJogada(
         time: idAtacante,
         zona: zonaEscanteio,
       };
+      desfechoTecnico = TIPOS_DESFECHO_TECNICO.ESCANTEIO;
       resultado = {
         tipo: 'escanteio',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
@@ -2053,21 +2728,41 @@ export function executarJogada(
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino: zonaEscanteio,
         desfecho: 'Defesa p/ Escanteio!',
-        texto: `${tagModo}${goleiroRival.nomeCurto} voou e espalmou a bomba de ${passador.nomeCurto} para ESCANTEIO em ${zonaEscanteio} (${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+        texto: narrar({
+          desfechoTecnico,
+          goleiro: goleiroRival,
+          zonaDestino: zonaEscanteio,
+        }),
       };
       concluirTurno(estado, idAtacante, zonaEscanteio, cobradorEsc.id, rngHabilidade);
     } else {
+      estDefensor.defesasGoleiro = (estDefensor.defesasGoleiro || 0) + 1;
       const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
+      desfechoTecnico =
+        sorteio <= limiteEscanteio + 12
+          ? TIPOS_DESFECHO_TECNICO.DEFESA_DIFICIL
+          : (calculo.pressaoPortadorOrigem ?? 0) >= 50
+            ? TIPOS_DESFECHO_TECNICO.FINALIZACAO_FRACA
+            : TIPOS_DESFECHO_TECNICO.DEFESA;
       resultado = {
         tipo: 'defesa',
+        desfechoTecnico,
         acao,
         time: idAtacante,
         sorteio,
         chance,
         zonaOrigem: previaEfetiva.zonaOrigem,
         zonaDestino: obterZonaGolAlvo(idAtacante),
-        desfecho: 'Defesa do goleiro',
-        texto: `${tagModo}Defendeu ${goleiroRival.nomeCurto}! Chute de ${passador.nomeCurto} parado (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
+        desfecho:
+          desfechoTecnico === TIPOS_DESFECHO_TECNICO.DEFESA_DIFICIL
+            ? 'Grande defesa do goleiro'
+            : desfechoTecnico === TIPOS_DESFECHO_TECNICO.FINALIZACAO_FRACA
+              ? 'Finalização fraca — defesa tranquila'
+              : 'Defesa do goleiro',
+        texto: narrar({
+          desfechoTecnico,
+          goleiro: goleiroRival,
+        }),
       };
       concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
     }
@@ -2112,6 +2807,8 @@ export function executarJogada(
     zonaDestino,
     sorteio,
     desfecho: resultado.desfecho,
+    desfechoTecnico,
+    disputa: disputaInfo,
     descontoRelogio: descontoRelogioTurno,
     posturaMeu: estado.posturas?.meuTime || POSTURA_PADRAO,
     posturaRival: estado.posturas?.rival || POSTURA_PADRAO,

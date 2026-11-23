@@ -89,6 +89,10 @@ import {
   renderizarTelaTreino,
 } from './ui/telas.js';
 import { renderizarSalaTrofeus } from './ui/trofeus.js';
+import {
+  formatarResumoQualitativoJogador,
+  resumirIdentidadeCard,
+} from './ui/apresentacao.js';
 
 function criarSintetizadorSom() {
   let ctx = null;
@@ -162,12 +166,7 @@ function criarSintetizadorSom() {
 }
 
 function formatarAtributosResumoReserva(reserva) {
-  const a = reserva.atributos;
-  if (reserva.ehGoleiro) {
-    return `DEF ${a.defesa} · PAS ${a.passe} · DOM ${a.dominio} · POS ${a.posicionamento}`;
-  }
-  const dib = a.dibre ?? a.tecnica;
-  return `PAS ${a.passe} · DOM ${a.dominio} · DIB ${dib} · MAR ${a.marcacao} · DES ${a.desarme} · VEL ${a.velocidade} · FIN ${a.finalizacao}`;
+  return formatarResumoQualitativoJogador(reserva);
 }
 
 function iniciarJogo() {
@@ -938,7 +937,7 @@ function iniciarJogo() {
     elSubRestantesBadge.textContent = `${checagem.restantesPartida}/${MAX_SUBSTITUICOES_PARTIDA} restantes`;
     elSubSaindoInfo.innerHTML =
       `Sai: <strong>${sai.nome}</strong> (${sai.posicao} · ${sai.zona || sai.papel}) · ` +
-      `Estamina <strong>${estSai}%</strong> (${formatarMultiplicador(faixaSai.multiplicador)})`;
+      `Condição: <strong>${faixaSai.rotulo} (${estSai}%)</strong>`;
 
     const lista = listarReservasDisponiveis(partida, 'meuTime', jogadorId);
     elListaReservas.innerHTML = '';
@@ -947,6 +946,7 @@ function iniciarJogo() {
       const r = item.reserva;
       const estR = obterEstamina(r);
       const faixaR = obterFaixaFadiga(estR);
+      const idCard = resumirIdentidadeCard(r, sai.papel || null);
 
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -963,15 +963,21 @@ function iniciarJogo() {
 
       const meta = document.createElement('span');
       meta.className = `reserva-estamina nivel-${faixaR.cor}`;
-      meta.textContent = `${r.setor || ''} · Est. ${estR}%`;
+      meta.textContent = `${idCard.nivel.rotulo} · Est. ${estR}%`;
 
       topo.append(nome, meta);
+
+      const idMeta = document.createElement('div');
+      idMeta.className = 'card-identidade-meta';
+      idMeta.textContent = idCard.familiaridade
+        ? `${idCard.linhaMeta} · ${idCard.familiaridade.rotulo}`
+        : idCard.linhaMeta;
 
       const attrs = document.createElement('div');
       attrs.className = 'reserva-atributos';
       attrs.textContent = formatarAtributosResumoReserva(r);
 
-      btn.append(topo, attrs);
+      btn.append(topo, idMeta, attrs);
 
       const habsR = obterHabilidadesJogador(r);
       if (habsR.length > 0) {
@@ -1526,7 +1532,7 @@ function iniciarJogo() {
 
   elBtnRodarSimulacao?.addEventListener('click', () => {
     if (!elSimResultado) return;
-    const forcaRival = Number(elSimForca?.value || 71);
+    const forcaRival = Number(elSimForca?.value || 46);
     const clubeId = elSimClube?.value || 'equilibrado';
     const tecnicoId = elSimTecnico?.value || 'padrao';
     const formacaoMeu = elSimFormacaoMeu?.value || '4-3-3';
@@ -1564,6 +1570,12 @@ function iniciarJogo() {
       { valor: `${res.pctEmpates}%`, rotulo: 'Empates' },
       { valor: `${res.pctDerrotas}%`, rotulo: 'Derrotas' },
       { valor: `${res.mediaGolsMeu} × ${res.mediaGolsRival}`, rotulo: 'Média Gols' },
+      { valor: `${res.pctPasseMeu ?? 0}%`, rotulo: 'Acerto Passes Meu' },
+      { valor: `${res.mediaFinalizacoesMeu ?? 0} × ${res.mediaFinalizacoesRival ?? 0}`, rotulo: 'Finalizações/Jogo' },
+      { valor: `${res.mediaInterceptacoesMeu ?? 0} × ${res.mediaInterceptacoesRival ?? 0}`, rotulo: 'Interceptações' },
+      { valor: `${res.mediaDisputas ?? 0} · ${res.mediaRebotes ?? 0}`, rotulo: 'Disputas · Rebotes' },
+      { valor: `${res.mediaTraves ?? 0} · ${res.mediaBloqueios ?? 0}`, rotulo: 'Traves · Bloqueios' },
+      { valor: `${res.mediaDefesasGoleiro ?? 0}`, rotulo: 'Defesas Goleiro' },
       { valor: `${res.mediaEstaminaFinalMeu}%`, rotulo: 'Est. Final Meu' },
       { valor: `${res.mediaEstaminaFinalRival}%`, rotulo: 'Est. Final Rival' },
     ];
