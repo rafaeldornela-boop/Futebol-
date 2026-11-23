@@ -503,7 +503,7 @@ test('contra-ataque (+10%) ativa ao recuperar por interceptação/desarme com ri
   assert.ok(minhaPrevia.calculo.ajustesChance.some((a) => a.rotulo === 'Contra-ataque' && a.valor === 10));
 });
 
-test('partida completa termina exatamente após 10 turnos por lado', () => {
+test('partida completa termina exatamente após 16 turnos por lado', () => {
   const partida = criarPartida();
   let passos = 0;
 
@@ -1798,6 +1798,433 @@ test('apresentação qualitativa e retrocompatibilidade de jogadores/saves legad
   assert.ok(formatarPeDominante(legado1).length > 3);
   assert.ok(classificarNivelJogador(legado1).rotulo.length > 2);
 });
+
+// ============================================================================
+// CICLO COMPLETO DE CARREIRA DOS JOGADORES (idade, faixas, desenvolvimento,
+// declínio gradual, longevidade, aposentadoria, mercado etário, temporada)
+// ============================================================================
+
+import {
+  aplicarDeclinioTemporada,
+  aplicarDesenvolvimentoTemporada,
+  avaliarAposentadoriaJogador,
+  calcularIdadeInicioDeclinio,
+  calcularProbabilidadeAposentadoria,
+  criarRegistroAposentadoria,
+  envelhecerJogador,
+  FAIXAS_CARREIRA,
+  garantirCarreiraJogador,
+  IDADE_MAXIMA_JOGADOR,
+  IDADE_MINIMA_JOGADOR,
+  normalizarIdade,
+  obterFaixaCarreira,
+  registrarParticipacaoPartidaCarreira,
+} from '../js/jogador/carreira.js';
+import { avancarTemporada } from '../js/campanha/nos.js';
+import { aplicarEvolucaoPosPartidaJogador } from '../js/jogador/desenvolvimento.js';
+import { calcularValorMercadoJogador } from '../js/campanha/estado.js';
+
+function criarRngSequencial(valores) {
+  let idx = 0;
+  return () => {
+    const val = valores[idx % valores.length];
+    idx += 1;
+    return val;
+  };
+}
+
+test('carreira: validação de idade, 7 faixas de carreira, avanço +1 na temporada e imutabilidade em partidas individuais', () => {
+  // Não permite idade negativa, zero, NaN ou absurda
+  assert.ok(normalizarIdade(-10) >= IDADE_MINIMA_JOGADOR && normalizarIdade(-10) <= IDADE_MAXIMA_JOGADOR);
+  assert.ok(normalizarIdade(0) >= IDADE_MINIMA_JOGADOR && normalizarIdade(0) <= IDADE_MAXIMA_JOGADOR);
+  assert.equal(normalizarIdade(12), IDADE_MINIMA_JOGADOR);
+  assert.equal(normalizarIdade(999), IDADE_MAXIMA_JOGADOR);
+  assert.equal(normalizarIdade(NaN, 22), 22);
+
+  // 7 faixas de carreira configuradas corretamente
+  assert.equal(FAIXAS_CARREIRA.length, 7);
+  assert.equal(obterFaixaCarreira(17).id, 'formacao');
+  assert.equal(obterFaixaCarreira(20).id, 'jovem');
+  assert.equal(obterFaixaCarreira(24).id, 'desenvolvimento');
+  assert.equal(obterFaixaCarreira(27).id, 'auge');
+  assert.equal(obterFaixaCarreira(31).id, 'veterano');
+  assert.equal(obterFaixaCarreira(34).id, 'declinio');
+  assert.equal(obterFaixaCarreira(37).id, 'fim_carreira');
+
+  // Partida individual NÃO avança a idade do elenco, mas registra participação e experiência
+  const camp = iniciarNovaCampanha('CARREIRA-IDADE-01');
+  const idadesAntes = camp.elenco.map((j) => j.idade);
+  const expAntes = camp.elenco[0].experiencia;
+  const noPartida = camp.mapa.camadas[0].nos[0];
+
+  aplicarPosPartidaCampanha(
+    camp,
+    {
+      resultado: 'vitoria',
+      placar: { meuTime: 2, rival: 0 },
+      estaminaFinal: { [camp.elenco[0].id]: 82 },
+      lesionados: [],
+      participantesIds: [camp.elenco[0].id, camp.elenco[1].id],
+      golsPorJogador: { [camp.elenco[1].id]: 2 },
+      assistenciasPorJogador: { [camp.elenco[0].id]: 1 },
+      rivalNome: 'Rival Teste',
+    },
+    noPartida,
+    { rngEvolucao: () => 0.99 },
+  );
+
+  assert.deepEqual(
+    camp.elenco.map((j) => j.idade),
+    idadesAntes,
+    'Idade não deve avançar após partida individual',
+  );
+  assert.ok(camp.elenco[0].experiencia > expAntes, 'Experiência deve subir ao disputar partida');
+  assert.equal(camp.elenco[1].estatisticasCarreira.gols, 2);
+  assert.equal(camp.elenco[0].estatisticasCarreira.assistencias, 1);
+
+  // Avançar temporada envelhece todos os ativos em exatamente +1 ano
+  const resTemp = avancarTemporada(camp, {
+    temporadaEsperada: 1,
+    chaveTransicao: 'teste_t1',
+    rng: () => 0.95, // evita aposentadoria aleatória neste teste
+  });
+  assert.equal(resTemp.avancou, true);
+  assert.equal(camp.temporada, 2);
+  for (let i = 0; i < idadesAntes.length; i += 1) {
+    assert.equal(camp.elenco[i].idade, Math.min(IDADE_MAXIMA_JOGADOR, idadesAntes[i] + 1));
+  }
+});
+
+test('carreira: desenvolvimento direcionado de jovem (nunca +1 em tudo), estagnação possível, auge estável (26–29) e teto de potencial inviolável', () => {
+  const jovem = hidratarCompleto({
+    id: 'car_jovem_1',
+    nome: 'Lucas Promessa',
+    posicao: 'MEI',
+    papel: 'MEI_C',
+    setor: 'MEI',
+    idade: 19,
+    potencial: 72,
+    curvaDesenvolvimento: 'equilibrada',
+    partidasNaTemporada: 8,
+    atributos: {
+      passe: 46, dominio: 45, posicionamento: 44, marcacao: 34,
+      interceptacao: 36, desarme: 32, velocidade: 48, tecnica: 46,
+      dibre: 45, finalizacao: 40, agressividade: 40, defesa: 20, concentracao: 44,
+    },
+  });
+
+  const antesAttrs = { ...jovem.atributos };
+  const devJovem = aplicarDesenvolvimentoTemporada(jovem, criarRngSequencial([0.99, 0.1, 0.2, 0.3, 0.4]));
+  assert.equal(devJovem.evoluiu, true);
+  assert.ok(devJovem.alteracoes.length >= 1 && devJovem.alteracoes.length <= 3, 'Deve evoluir apenas atributos selecionados (1..3)');
+
+  const qtdAlterados = Object.keys(antesAttrs).filter((k) => jovem.atributos[k] !== antesAttrs[k]).length;
+  assert.ok(qtdAlterados <= 3 && qtdAlterados < Object.keys(antesAttrs).length, 'Nunca deve somar +1 plano em todos os atributos');
+
+  // Estagnação realista ocorre quando sorteio cai na faixa de estagnação
+  const jovemEstagnado = hidratarCompleto({
+    id: 'car_jovem_estag',
+    nome: 'Enzo Reserva',
+    posicao: 'MEI',
+    papel: 'MEI_C',
+    setor: 'MEI',
+    idade: 20,
+    potencial: 76,
+    partidasNaTemporada: 0,
+    atributos: { ...antesAttrs },
+  });
+  const devEstag = aplicarDesenvolvimentoTemporada(jovemEstagnado, () => 0.01);
+  assert.equal(devEstag.estagnou, true, 'Jovem sem minutagem pode estagnar na temporada');
+  assert.equal(devEstag.alteracoes.length, 0);
+
+  // Potencial NUNCA é ultrapassado (nem por múltiplas temporadas nem por treinos repetidos)
+  const quaseTeto = hidratarCompleto({
+    id: 'car_teto_1',
+    nome: 'Bruno Teto',
+    posicao: 'CA',
+    papel: 'CA',
+    setor: 'ATA',
+    idade: 20,
+    potencial: 62,
+    partidasNaTemporada: 12,
+    atributos: {
+      passe: 52, dominio: 58, posicionamento: 59, marcacao: 30,
+      interceptacao: 32, desarme: 28, velocidade: 58, tecnica: 58,
+      dibre: 56, finalizacao: 60, agressividade: 44, defesa: 20, concentracao: 58,
+    },
+  });
+
+  for (let i = 0; i < 8; i += 1) {
+    aplicarDesenvolvimentoTemporada(quaseTeto, () => 0.99);
+    const ganho = calcularGanhoTreinoAtributo(quaseTeto, 'finalizacao');
+    if (ganho.ganho > 0) {
+      aplicarEvolucaoAtributo(quaseTeto, 'finalizacao', ganho.ganho, 'treino');
+    }
+    aplicarEvolucaoPosPartidaJogador(quaseTeto, () => 0.1);
+  }
+  assert.ok(
+    calcularAvaliacaoPosicional(quaseTeto) <= quaseTeto.potencial,
+    `Avaliação (${calcularAvaliacaoPosicional(quaseTeto)}) jamais pode ultrapassar potencial (${quaseTeto.potencial})`,
+  );
+  assert.ok(
+    quaseTeto.atributos.finalizacao <= quaseTeto.potencial,
+    `Atributo desenvolvido (${quaseTeto.atributos.finalizacao}) jamais pode ultrapassar potencial (${quaseTeto.potencial})`,
+  );
+
+  // Auge (26–29): estabilidade alta, ainda permite refinamento técnico/mental aos 29 sem corte brusco
+  const auge29 = hidratarCompleto({
+    id: 'car_auge_29',
+    nome: 'Diego Auge',
+    posicao: 'MEI',
+    papel: 'MEI_C',
+    setor: 'MEI',
+    idade: 29,
+    potencial: 68,
+    curvaDesenvolvimento: 'tardia',
+    partidasNaTemporada: 10,
+    atributos: {
+      passe: 60, dominio: 58, posicionamento: 58, marcacao: 46,
+      interceptacao: 48, desarme: 44, velocidade: 54, tecnica: 60,
+      dibre: 55, finalizacao: 52, agressividade: 46, defesa: 20, concentracao: 58,
+    },
+  });
+  const velAntes = auge29.atributos.velocidade;
+  const devAuge = aplicarDesenvolvimentoTemporada(auge29, () => 0.92);
+  assert.equal(devAuge.faixaCarreira, 'auge');
+  assert.equal(devAuge.evoluiu, true, 'Atleta de 29 anos no auge com espaço ainda pode refinar detalhes');
+  assert.equal(auge29.atributos.velocidade, velAntes, 'No auge, refinamento prioriza técnico/mental e não infla velocidade');
+});
+
+test('carreira: declínio gradual de veterano atinge físico antes de técnico/mental e varia por longevidade individual', () => {
+  const vetFragil = hidratarCompleto({
+    id: 'vet_fragil',
+    nome: 'Marcos Curto',
+    posicao: 'MEI',
+    papel: 'MEI_C',
+    setor: 'MEI',
+    idade: 34,
+    longevidade: 0.78,
+    potencial: 66,
+    experiencia: 82,
+    atributos: {
+      passe: 64, dominio: 62, posicionamento: 64, marcacao: 46,
+      interceptacao: 56, desarme: 46, velocidade: 58, tecnica: 63,
+      dibre: 54, finalizacao: 50, agressividade: 44, defesa: 20, concentracao: 66,
+    },
+  });
+
+  const vetLongevo = hidratarCompleto({
+    id: 'vet_longevo',
+    nome: 'Rafael Longevo',
+    posicao: 'MEI',
+    papel: 'MEI_C',
+    setor: 'MEI',
+    idade: 34,
+    longevidade: 1.26,
+    potencial: 66,
+    experiencia: 82,
+    atributos: { ...vetFragil.atributos },
+  });
+
+  assert.ok(
+    calcularIdadeInicioDeclinio(vetLongevo) > calcularIdadeInicioDeclinio(vetFragil),
+    'Longevidade maior deve atrasar início do declínio individual',
+  );
+
+  const passeAntes = vetFragil.atributos.passe;
+  const concAntes = vetFragil.atributos.concentracao;
+  const velAntes = vetFragil.atributos.velocidade;
+
+  let quedaVelTotal = 0;
+  for (let t = 0; t < 3; t += 1) {
+    const res = aplicarDeclinioTemporada(vetFragil, () => 0.25);
+    const qVel = res.alteracoes.find((a) => a.atributo === 'velocidade');
+    if (qVel) quedaVelTotal += Math.abs(qVel.delta);
+    envelhecerJogador(vetFragil, 1);
+  }
+
+  assert.ok(quedaVelTotal >= 3, `Velocidade do veterano deveria cair gradualmente (caiu ${quedaVelTotal})`);
+  assert.ok(vetFragil.atributos.velocidade < velAntes);
+  assert.equal(vetFragil.atributos.passe, passeAntes, 'Atributo técnico (passe) deve resistir ao declínio inicial');
+  assert.ok(vetFragil.atributos.concentracao >= concAntes, 'Mental (concentração) deve resistir ou até se manter firme');
+});
+
+test('carreira: aposentadoria progressiva por idade, remoção do elenco, exclusão do mercado e registro histórico completo', () => {
+  const criarVetIdade = (idade, longevidade = 1.0) =>
+    hidratarCompleto({
+      id: `ap_${idade}`,
+      nome: `Lenda ${idade}`,
+      posicao: 'ZAG',
+      papel: 'ZAG1',
+      setor: 'DEF',
+      idade,
+      longevidade,
+      potencial: 60,
+      atributos: {
+        passe: 50, dominio: 48, posicionamento: 58, marcacao: 58,
+        interceptacao: 56, desarme: 54, velocidade: 38, tecnica: 46,
+        dibre: 34, finalizacao: 30, agressividade: 50, defesa: 20, concentracao: 62,
+      },
+    });
+
+  const p34 = calcularProbabilidadeAposentadoria(criarVetIdade(34));
+  const p36 = calcularProbabilidadeAposentadoria(criarVetIdade(36));
+  const p38 = calcularProbabilidadeAposentadoria(criarVetIdade(38));
+  const p40 = calcularProbabilidadeAposentadoria(criarVetIdade(40));
+  const p45 = calcularProbabilidadeAposentadoria(criarVetIdade(45));
+
+  assert.equal(p34, 0, 'Jogador de 34 anos não deve ter probabilidade de aposentadoria');
+  assert.ok(p36 > 0 && p36 < 0.35, `36 anos deve ter chance baixa e não automática (${p36})`);
+  assert.ok(p38 > p36 && p40 > p38, `Probabilidade deve crescer com a idade: 36=${p36}, 38=${p38}, 40=${p40}`);
+  assert.equal(p45, 1);
+
+  // Não aposenta automaticamente aos 36 se rolagem for alta
+  const av36 = avaliarAposentadoriaJogador(criarVetIdade(36), () => 0.9);
+  assert.equal(av36.aposentou, false);
+
+  // Aposentadoria em avancarTemporada remove do elenco, grava histórico e bloqueia retorno no mercado
+  const camp = iniciarNovaCampanha('CARREIRA-APOS-01');
+  const veterano = camp.elenco[1]; // jogador de linha
+  veterano.nome = 'Breno Siqueira'; // nome pertencente ao pool do mercado para provar exclusão
+  veterano.nomeCurto = 'Breno';
+  veterano.idade = 40;
+  veterano.longevidade = 0.85;
+  registrarParticipacaoPartidaCarreira(veterano, { gols: 7, assistencias: 4, relevante: true, titulo: true });
+
+  const idAposentado = veterano.id;
+  const nomeAposentado = veterano.nome;
+
+  const res = avancarTemporada(camp, {
+    temporadaEsperada: 1,
+    chaveTransicao: 'apos_t1',
+    rng: () => 0.05, // força aposentadoria do veterano de 41 anos
+  });
+
+  assert.equal(res.avancou, true);
+  assert.ok(res.aposentados.some((a) => a.id === idAposentado), 'Veterano deve aposentar na virada');
+  assert.ok(!camp.elenco.some((j) => j.id === idAposentado), 'Aposentado deve sair do elenco ativo');
+
+  const reg = camp.historicoAposentados.find((a) => a.id === idAposentado);
+  assert.ok(reg, 'Registro de aposentadoria deve ser gravado no histórico');
+  assert.equal(reg.nome, nomeAposentado);
+  assert.equal(reg.idadeAposentadoria, 41);
+  assert.equal(reg.clube, camp.clubeNome);
+  assert.equal(reg.posicao, veterano.posicao);
+  assert.equal(reg.partidas, 1);
+  assert.equal(reg.gols, 7);
+  assert.equal(reg.assistencias, 4);
+  assert.equal(reg.titulos, 1);
+  assert.equal(reg.temporadaAposentadoria, 1);
+  assert.ok(reg.atributosFinais && typeof reg.atributosFinais.concentracao === 'number');
+
+  // Nenhuma oferta futura de mercado deve regenerar o jogador aposentado
+  for (let k = 1; k <= 6; k += 1) {
+    const ofertas = gerarOfertasMercado(camp, { id: `c${k}_m1`, camada: k, tipo: TIPOS_NO.MERCADO });
+    for (const o of ofertas) {
+      assert.notEqual(o.jogador.id, idAposentado);
+      assert.notEqual(o.jogador.nome, nomeAposentado, 'Jogador aposentado não pode reaparecer no mercado');
+    }
+  }
+});
+
+test('carreira: mercado coerente por idade, contratação preserva idade, valor de mercado multifatorial, base integrada e avancarTemporada() idempotente', () => {
+  // 1) Valor de mercado considera idade + potencial + atributos atuais + posição + habilidades
+  const baseAttrs48 = {
+    passe: 48, dominio: 48, posicionamento: 48, marcacao: 42,
+    interceptacao: 44, desarme: 40, velocidade: 48, tecnica: 48,
+    dibre: 48, finalizacao: 46, agressividade: 44, defesa: 20, concentracao: 48,
+  };
+  const baseAttrs50 = {
+    passe: 50, dominio: 50, posicionamento: 50, marcacao: 44,
+    interceptacao: 46, desarme: 42, velocidade: 50, tecnica: 50,
+    dibre: 50, finalizacao: 48, agressividade: 44, defesa: 20, concentracao: 50,
+  };
+  const baseAttrs68 = {
+    passe: 68, dominio: 68, posicionamento: 68, marcacao: 52,
+    interceptacao: 54, desarme: 48, velocidade: 66, tecnica: 68,
+    dibre: 66, finalizacao: 62, agressividade: 46, defesa: 20, concentracao: 68,
+  };
+
+  const jovemPromessa = hidratarCompleto({
+    id: 'val_j19', nome: 'Jovem 19', posicao: 'MEI', papel: 'MEI_C', setor: 'MEI',
+    idade: 19, potencial: 72, atributos: baseAttrs48,
+  });
+  const veteranoEquiv = hidratarCompleto({
+    id: 'val_v30', nome: 'Vet 30', posicao: 'MEI', papel: 'MEI_C', setor: 'MEI',
+    idade: 30, potencial: 52, atributos: baseAttrs50,
+  });
+  const prontoCraque = hidratarCompleto({
+    id: 'val_p26', nome: 'Pronto 26', posicao: 'MEI', papel: 'MEI_C', setor: 'MEI',
+    idade: 26, potencial: 70, atributos: baseAttrs68,
+  });
+  const prontoMesmoNivel30 = hidratarCompleto({
+    id: 'val_v32', nome: 'Vet 32', posicao: 'MEI', papel: 'MEI_C', setor: 'MEI',
+    idade: 32, potencial: 68, atributos: baseAttrs68,
+  });
+
+  const vJovem = calcularValorMercadoJogador(jovemPromessa);
+  const vVet = calcularValorMercadoJogador(veteranoEquiv);
+  const vCraque = calcularValorMercadoJogador(prontoCraque);
+  const vVetBom = calcularValorMercadoJogador(prontoMesmoNivel30);
+
+  assert.ok(vJovem > vVet, `Jovem 19a (48/pot 72 = $${vJovem}) deve valer mais que veterano 30a (50/pot 52 = $${vVet})`);
+  assert.ok(vCraque > vJovem, `Craque pronto 26a ($${vCraque}) ainda deve valer mais que promessa 19a ($${vJovem}) — potencial não domina sozinho`);
+  assert.ok(vVetBom < vCraque, `Veterano 32a ($${vVetBom}) deve custar menos que equivalente 26a ($${vCraque})`);
+
+  // 2) Mercado gera perfis etários coerentes + Base gera jovens 16–19 + contratação mantém idade exata
+  const metaBase = criarEstadoMetaInicial();
+  metaBase.melhorias.base = 2;
+  const camp = iniciarNovaCampanha('CARREIRA-MERCADO-01', metaBase);
+  camp.dinheiro = 1000;
+  // Abre vaga no elenco para contratar
+  camp.elenco.pop();
+
+  const noMercado = { id: 'c3_n2', camada: 3, tipo: TIPOS_NO.MERCADO };
+  const ofertas = gerarOfertasMercado(camp, noMercado);
+  const promessa = ofertas.find((o) => o.arquetipoId === 'promessa');
+  const pronto = ofertas.find((o) => o.arquetipoId === 'jogador_pronto');
+  const vet = ofertas.find((o) => o.arquetipoId === 'veterano');
+  const vetExp = ofertas.find((o) => o.arquetipoId === 'veterano_experiencia');
+  const jovensBase = ofertas.filter((o) => o.ehJovem);
+
+  assert.ok(promessa && promessa.jogador.idade >= 16 && promessa.jogador.idade <= 21);
+  assert.ok(pronto && pronto.jogador.idade >= 22 && pronto.jogador.idade <= 29);
+  assert.ok(vet && vet.jogador.idade >= 30 && vet.jogador.idade <= 35);
+  assert.ok(vetExp && vetExp.jogador.idade >= 32);
+  assert.ok(
+    vetExp.jogador.atributos.concentracao > vetExp.jogador.atributos.velocidade,
+    'Veterano de experiência deve ter mental/concentração superior à velocidade',
+  );
+  assert.equal(jovensBase.length, 2);
+  for (const jb of jovensBase) {
+    assert.ok(jb.jogador.idade >= 16 && jb.jogador.idade <= 19, `Jovem da base com idade coerente (${jb.jogador.idade})`);
+  }
+
+  const idadeOferta = vet.jogador.idade;
+  const compra = comprarJogadorMercado(camp, noMercado, vet, ofertas);
+  assert.equal(compra.valido, true);
+  assert.equal(compra.jogador.idade, idadeOferta, 'Jogador contratado durante a temporada mantém sua idade atual');
+
+  // 3) avancarTemporada() executa exatamente uma vez por transição (guarda de idempotência)
+  const idadeAntesVirada = compra.jogador.idade;
+  const firstRun = avancarTemporada(camp, {
+    temporadaEsperada: 1,
+    chaveTransicao: 'virada_unica_t1',
+    rng: () => 0.95,
+  });
+  const secondRun = avancarTemporada(camp, {
+    temporadaEsperada: 1,
+    chaveTransicao: 'virada_unica_t1',
+    rng: () => 0.95,
+  });
+
+  assert.equal(firstRun.avancou, true);
+  assert.equal(secondRun.avancou, false);
+  assert.equal(secondRun.jaExecutada, true);
+  assert.equal(camp.temporada, 2, 'Temporada não pode avançar duas vezes na mesma transição');
+  assert.equal(compra.jogador.idade, idadeAntesVirada + 1, 'Jogador não pode envelhecer duas vezes na mesma virada');
+});
+
 
 
 

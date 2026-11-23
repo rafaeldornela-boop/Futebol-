@@ -852,6 +852,7 @@ export function renderizarModalElenco(container, estado) {
     const habs = obterHabilidadesJogador(j);
     const valor = calcularValorMercadoJogador(j);
     const idCard = resumirIdentidadeCard(j);
+    const stats = j.estatisticasCarreira || {};
 
     const card = el('div', `elenco-insp-card${j.lesionado ? ' lesionado' : ''}`);
     const topo = el('div', 'escalacao-card-topo');
@@ -860,12 +861,17 @@ export function renderizarModalElenco(container, estado) {
       el('strong', 'escalacao-nome', `${j.nome}${j.lesionado ? ' · LESIONADO' : ''}`),
       criarBadgeNivel(idCard.nivel, `$${valor}`),
     );
+    const faixaTxt = idCard.faixaCarreira ? ` (${idCard.faixaCarreira.rotulo})` : '';
+    const statsTxt =
+      stats.partidas > 0
+        ? ` · ${stats.partidas}J ${stats.gols || 0}G ${stats.assistencias || 0}A`
+        : '';
     card.append(
       topo,
       el(
         'div',
         'card-identidade-meta',
-        `${idCard.idade} anos · ${formatarPeDominante(j)} · ${idCard.potencial.rotulo}`,
+        `${idCard.idade} anos${faixaTxt} · ${formatarPeDominante(j)} · ${idCard.potencial.rotulo}${statsTxt}`,
       ),
       criarBarraEstaminaElenco(j),
     );
@@ -902,6 +908,26 @@ export function renderizarModalElenco(container, estado) {
 
     container.appendChild(card);
   }
+
+  // Histórico de aposentados (Hall da Fama) quando houver atletas encerrados na carreira
+  const aposentados = estado.historicoAposentados || [];
+  if (aposentados.length > 0) {
+    const secao = el('div', 'elenco-insp-card');
+    secao.appendChild(
+      el('strong', 'escalacao-nome', `Hall da Fama · Aposentados (${aposentados.length})`),
+    );
+    for (const ap of [...aposentados].reverse()) {
+      secao.appendChild(
+        el(
+          'div',
+          'card-identidade-meta',
+          `${ap.nome} (${ap.posicao}) — aposentou aos ${ap.idadeAposentadoria} anos na Temp. ${ap.temporadaAposentadoria} · ` +
+            `${ap.partidas}J · ${ap.gols}G · ${ap.assistencias}A · ${ap.titulos} título(s)`,
+        ),
+      );
+    }
+    container.appendChild(secao);
+  }
 }
 
 /**
@@ -913,22 +939,33 @@ export function renderizarTelaFimCampanha(estado, resultadoMeta = null) {
   const elStats = document.getElementById('fim-camp-stats');
   const elLegado = document.getElementById('fim-camp-legado');
   const elHistorico = document.getElementById('fim-camp-historico');
+  const elBtnProxTemp = document.getElementById('btn-fim-camp-proxima-temporada');
 
   if (!estado) return;
 
+  const tempAtual = estado.temporada || 1;
+
   if (elTitulo) {
     elTitulo.textContent =
-      estado.status === 'vitoria' ? 'Campeão da Temporada!' : 'Fim da Campanha';
+      estado.status === 'vitoria'
+        ? `Campeão da Temporada ${tempAtual}!`
+        : `Fim da Campanha (Temp. ${tempAtual})`;
     elTitulo.dataset.vitoria = estado.status === 'vitoria' ? 'true' : 'false';
   }
   if (elSubtitulo) {
     elSubtitulo.textContent = estado.motivoFim || '';
   }
 
+  if (elBtnProxTemp) {
+    const podeAvancar = estado.status === 'vitoria';
+    elBtnProxTemp.hidden = !podeAvancar;
+    elBtnProxTemp.textContent = `Avançar para Temporada ${tempAtual + 1}`;
+  }
+
   if (elStats) {
     elStats.innerHTML = '';
     const itens = [
-      { valor: `${estado.clubeSigla || 'BRI'} · Nív. ${estado.dificuldade || 0}`, rotulo: 'Clube / Dif.' },
+      { valor: `${estado.clubeSigla || 'BRI'} · Temp. ${tempAtual}`, rotulo: 'Clube / Temp.' },
       { valor: `${estado.vitorias}-${estado.empates}-${estado.derrotas}`, rotulo: 'V-E-D' },
       { valor: `$${estado.dinheiro}`, rotulo: 'Caixa Final' },
       { valor: `${estado.nosVisitados.length}/${CAMPANHA_CONFIG.totalCamadas}`, rotulo: 'Camadas' },
@@ -1007,8 +1044,12 @@ export function renderizarTelaFimCampanha(estado, resultadoMeta = null) {
     elHistorico.innerHTML = '';
     for (const h of [...(estado.historico || [])].reverse()) {
       const item = el('div', 'camp-historico-item');
+      const tituloItem =
+        h.tipo === 'temporada'
+          ? 'Virada de Temporada'
+          : `Camada ${h.camada} · ${METADADOS_NO[h.tipo]?.nome || h.tipo}`;
       item.append(
-        el('div', 'camp-historico-topo', `Camada ${h.camada} · ${METADADOS_NO[h.tipo]?.nome || h.tipo}`),
+        el('div', 'camp-historico-topo', tituloItem),
         el('div', 'camp-historico-desc', h.resumo || ''),
       );
       elHistorico.appendChild(item);

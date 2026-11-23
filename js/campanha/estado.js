@@ -13,8 +13,13 @@ import { TIMES_PADRAO } from '../dados/times.js';
 import { LISTA_HABILIDADES, jogadorPodeTerHabilidade } from '../dados/habilidades.js';
 import { criarInstanciaHabilidade } from '../regras/habilidades.js';
 import { CAMPANHA_CONFIG } from './constantes.js';
-import { calcularAvaliacaoPosicional } from '../jogador/identidade.js';
+import {
+  calcularAvaliacaoPosicional,
+  normalizarChavePosicao,
+  PESOS_AVALIACAO_POSICIONAL,
+} from '../jogador/identidade.js';
 import { garantirDesenvolvimentoJogador } from '../jogador/desenvolvimento.js';
+import { normalizarIdade, obterFaixaCarreira } from '../jogador/carreira.js';
 
 export const ATRIBUTOS_LINHA = Object.freeze([
   'passe',
@@ -136,23 +141,65 @@ export function calcularMediaTitularesInicial(elenco) {
   return Math.round((soma / titulares.length) * 10) / 10;
 }
 
+const MULTIPLICADOR_POSICAO_MERCADO = Object.freeze({
+  CA: 1.07,
+  PONTA: 1.06,
+  MEI: 1.04,
+  VOL: 1.0,
+  LAT: 1.0,
+  ZAG: 0.97,
+  GOL: 0.94,
+});
+
 /**
- * Valor de mercado (100 a 400) proporcional à capacidade atual, potencial (em jovens) e habilidades.
+ * Calcula um pequeno bônus de especialização quando o atleta tem atributos-chave
+ * da sua posição claramente acima da própria média (perfil especialista).
+ */
+function calcularBonusEspecializacaoMercado(jogador, mediaPosicional) {
+  if (!jogador?.atributos) return 0;
+  const posChave = normalizarChavePosicao(jogador);
+  const pesos = PESOS_AVALIACAO_POSICIONAL[posChave] || PESOS_AVALIACAO_POSICIONAL.MEI;
+  const principais = Object.entries(pesos)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2);
+  if (principais.length === 0) return 0;
+  const mediaPrincipais =
+    principais.reduce((acc, [attr]) => acc + (jogador.atributos[attr] ?? mediaPosicional), 0) /
+    principais.length;
+  const destaque = Math.max(0, mediaPrincipais - mediaPosicional - 3);
+  return Math.min(26, destaque * 2.2);
+}
+
+/**
+ * Valor de mercado (100 a 400) considerando:
+ * - atributos atuais (avaliação posicional)
+ * - idade / faixa de carreira (veteranos mais baratos que equivalentes jovens)
+ * - potencial ponderado pela idade (sem deixar potencial sozinho dominar tudo)
+ * - habilidades especiais
+ * - posição e especialização
  */
 export function calcularValorMercadoJogador(jogador) {
   const media = calcularMediaJogador(jogador);
-  const idade = jogador?.idade ?? 24;
+  const idade = normalizarIdade(jogador?.idade, 24);
+  const faixa = obterFaixaCarreira(idade);
   const potencial = typeof jogador?.potencial === 'number' ? jogador.potencial : media;
+  const posChave = normalizarChavePosicao(jogador);
+  const multPosicao = MULTIPLICADOR_POSICAO_MERCADO[posChave] ?? 1.0;
+
   const bonusHab = (jogador?.extras?.habilidades?.length || 0) * 18;
-  const margemPotencial = Math.max(0, potencial - media);
-  const bonusPotencial =
-    idade <= 21
-      ? margemPotencial * 1.9
-      : idade <= 24
-        ? margemPotencial * 1.0
-        : 0;
-  // Escala calibrada: media 40 -> ~105, 50 -> ~160, 60 -> ~235, 70 -> ~320, 78+ -> ~400
-  const bruto = 100 + Math.max(0, media - 38) * 6.8 + bonusPotencial + bonusHab;
+  const bonusEspec = calcularBonusEspecializacaoMercado(jogador, media);
+
+  // Base pela capacidade atual (media 40 -> ~105, 50 -> ~168, 60 -> ~236, 70 -> ~304)
+  const valorAtual = 95 + Math.max(0, media - 36) * 6.5;
+
+  // Potencial adiciona valor significativo em jovens, moderado em desenvolvimento e quase nada em veteranos,
+  // limitado para nunca fazer potencial sozinho sobrepor jogadores prontos de alto nível.
+  const margemPotencial = Math.max(0, Math.min(34, potencial - media));
+  const bonusPotencial = Math.min(78, margemPotencial * faixa.pesoPotencialMercado);
+
+  const subtotal = (valorAtual + bonusEspec) * faixa.fatorIdadeMercado + bonusPotencial + bonusHab;
+  const bruto = subtotal * multPosicao;
+
   return Math.max(
     CAMPANHA_CONFIG.mercadoPrecoMin,
     Math.min(CAMPANHA_CONFIG.mercadoPrecoMax, Math.round(bruto / 5) * 5),
@@ -444,6 +491,13 @@ export function criarEstadoCampanhaBase({
     formacaoRival: sortearFormacaoPorSeed(`${seedFinal}::formacao_rival`),
     formacaoSelecionada: FORMACAO_PADRAO,
     posturaSelecionada: 'equilibrada',
+    temporada: 1,
+    ultimaTemporadaAvancada: 0,
+    mercadoTemporada: 1,
+    historicoAposentados: [],
+    aposentadosIds: [],
+    aposentadosNomes: [],
+    resumoUltimaTemporada: null,
     status: 'em_andamento', // 'em_andamento' | 'vitoria' | 'derrota'
     motivoFim: '',
   };
@@ -479,6 +533,27 @@ export function carregarCampanha(storage = globalThis?.localStorage) {
     }
     for (const j of parsed.elenco) {
       garantirDesenvolvimentoJogador(j);
+    }
+    if (typeof parsed.temporada !== 'number' || parsed.temporada < 1) {
+      parsed.temporada = 1;
+    }
+    if (typeof parsed.ultimaTemporadaAvancada !== 'number') {
+      parsed.ultimaTemporadaAvancada = 0;
+    }
+    if (typeof parsed.mercadoTemporada !== 'number') {
+      parsed.mercadoTemporada = parsed.temporada;
+    }
+    if (!Array.isArray(parsed.historicoAposentados)) {
+      parsed.historicoAposentados = [];
+    }
+    if (!Array.isArray(parsed.aposentadosIds)) {
+      parsed.aposentadosIds = parsed.historicoAposentados.map((a) => a.id).filter(Boolean);
+    }
+    if (!Array.isArray(parsed.aposentadosNomes)) {
+      parsed.aposentadosNomes = parsed.historicoAposentados.map((a) => a.nome).filter(Boolean);
+    }
+    if (parsed.resumoUltimaTemporada === undefined) {
+      parsed.resumoUltimaTemporada = null;
     }
     return parsed;
   } catch {

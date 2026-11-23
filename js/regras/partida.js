@@ -250,6 +250,9 @@ export function criarPartida(timesPersonalizados = null, opcoes = {}) {
       texto: `Apita o árbitro! ${zagueiroInicial.nomeCurto} (${zagueiroInicial.posicao}) inicia com a bola em Z1-C. Toque nele para passar, conduzir ou dibrar.`,
     },
     historico: [],
+    golsPorJogador: {},
+    assistenciasPorJogador: {},
+    ultimoPasseTime: { meuTime: null, rival: null },
     estatisticas: {
       meuTime: {
         passesCertos: 0,
@@ -1706,6 +1709,12 @@ export function executarJogada(
         }
       } else {
         estAtacante.passesCertos += 1;
+        if (estado.ultimoPasseTime) {
+          estado.ultimoPasseTime[idAtacante] = {
+            passadorId: passador.id,
+            receptorId: receptor.id,
+          };
+        }
         const tipoId = calculo.tipo?.id || 'curto';
         const foiDaLinhaDeFundo =
           ehZonaLinhaDeFundo(previaEfetiva.zonaOrigem, idAtacante) &&
@@ -2277,6 +2286,16 @@ export function executarJogada(
     if (sorteio <= chance) {
       estAtacante.passesCertos += 1;
       estado.placar[idAtacante] += 1;
+      if (estado.golsPorJogador && receptor?.id) {
+        estado.golsPorJogador[receptor.id] = (estado.golsPorJogador[receptor.id] || 0) + 1;
+      }
+      if (estado.assistenciasPorJogador && passador?.id && passador.id !== receptor?.id) {
+        estado.assistenciasPorJogador[passador.id] =
+          (estado.assistenciasPorJogador[passador.id] || 0) + 1;
+      }
+      if (estado.ultimoPasseTime) {
+        estado.ultimoPasseTime[idAtacante] = null;
+      }
       ganharImpeto(estado, idAtacante, 1);
       zerarImpeto(estado, idDefensor);
       const saidaRival = encontrarJogadorSaida(timeDefensor);
@@ -2456,6 +2475,23 @@ export function executarJogada(
 
     if (sorteio <= chance) {
       estado.placar[idAtacante] += 1;
+      if (estado.golsPorJogador && passador?.id) {
+        estado.golsPorJogador[passador.id] = (estado.golsPorJogador[passador.id] || 0) + 1;
+      }
+      const ultPasse = estado.ultimoPasseTime?.[idAtacante];
+      if (
+        estado.assistenciasPorJogador &&
+        ultPasse &&
+        ultPasse.receptorId === passador?.id &&
+        ultPasse.passadorId &&
+        ultPasse.passadorId !== passador?.id
+      ) {
+        estado.assistenciasPorJogador[ultPasse.passadorId] =
+          (estado.assistenciasPorJogador[ultPasse.passadorId] || 0) + 1;
+      }
+      if (estado.ultimoPasseTime) {
+        estado.ultimoPasseTime[idAtacante] = null;
+      }
       ganharImpeto(estado, idAtacante, 1);
       zerarImpeto(estado, idDefensor);
       const saidaRival = encontrarJogadorSaida(timeDefensor);
@@ -2968,6 +3004,8 @@ export function compilarResultadoPartida(estado, opcoes = {}) {
     estaminaFinal,
     lesionados,
     participantesIds,
+    golsPorJogador: { ...(estado.golsPorJogador || {}) },
+    assistenciasPorJogador: { ...(estado.assistenciasPorJogador || {}) },
     rivalNome: estado.times?.rival?.nome || 'Rival',
     estatisticas: structuredClone(estado.estatisticas),
   };

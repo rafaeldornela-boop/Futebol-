@@ -18,6 +18,7 @@ import {
   ROTULOS_PE_DOMINANTE,
 } from '../jogador/identidade.js';
 import { classificarPotencialOlheiro } from '../jogador/desenvolvimento.js';
+import { obterFaixaCarreira } from '../jogador/carreira.js';
 
 export const FAIXAS_ATRIBUTO_QUALITATIVO = Object.freeze([
   { id: 'excepcional', min: 80, rotulo: 'Excepcional', curto: 'Excep.', nivelCor: 'excepcional' },
@@ -161,6 +162,7 @@ export function resumirIdentidadeCard(jogador, papelAlvo = null) {
   const fam = papelAlvo ? avaliarFamiliaridadePosicao(jogador, papelAlvo) : null;
   const peCurto = ROTULOS_PE_DOMINANTE[jogador?.peDominante || 'direito'] || 'Destro';
   const idade = jogador?.idade ?? 24;
+  const faixaCarreira = obterFaixaCarreira(idade);
 
   return {
     nivel,
@@ -168,7 +170,8 @@ export function resumirIdentidadeCard(jogador, papelAlvo = null) {
     familiaridade: fam,
     peCurto,
     idade,
-    linhaMeta: `${idade} anos · ${peCurto} · ${pot.rotulo}`,
+    faixaCarreira,
+    linhaMeta: `${idade} anos (${faixaCarreira.rotulo}) · ${peCurto} · ${pot.rotulo}`,
   };
 }
 

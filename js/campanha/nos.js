@@ -30,6 +30,7 @@ import { obterEventosDisponiveis } from './eventos.js';
 import {
   ATRIBUTOS_LINHA,
   calcularMediaJogador,
+  calcularMediaTitularesInicial,
   calcularValorMercadoJogador,
   criarEstadoCampanhaBase,
   criarRng,
@@ -43,6 +44,16 @@ import {
   calcularGanhoTreinoAtributo,
   garantirDesenvolvimentoJogador,
 } from '../jogador/desenvolvimento.js';
+import {
+  aplicarDeclinioTemporada,
+  aplicarDesenvolvimentoTemporada,
+  avaliarAposentadoriaJogador,
+  criarRegistroAposentadoria,
+  envelhecerJogador,
+  normalizarIdade,
+  obterFaixaCarreira,
+  registrarParticipacaoPartidaCarreira,
+} from '../jogador/carreira.js';
 import { classificarAtributoQualitativo } from '../ui/apresentacao.js';
 
 export function obterModsCampanha(estado) {
@@ -299,7 +310,7 @@ export function aplicarPosPartidaCampanha(
   let resultadoFinal = resultadoPartida.resultado;
   let notaDesempate = '';
 
-  // Se o Chefão terminar empatado em 10 turnos, disputa pênaltis para decisão imediata
+  // Se o Chefão terminar empatado no tempo regulamentar, disputa pênaltis para decisão imediata
   if (ehChefao && resultadoFinal === 'empate') {
     const venceuPenaltis = rngDesempateChefao() < 0.52;
     resultadoFinal = venceuPenaltis ? 'vitoria' : 'derrota';
@@ -308,7 +319,7 @@ export function aplicarPosPartidaCampanha(
       : ' Empate no tempo normal; derrota nos pênaltis.';
   }
 
-  // 1. Atualiza estamina e lesões (antes da recuperação entre nós)
+  // 1. Atualiza estamina e lesões (antes da recuperação entre nós) — idade NUNCA avança por partida
   const estaminaFinal = resultadoPartida.estaminaFinal || {};
   const lesionadosSet = new Set(resultadoPartida.lesionados || []);
   const nomesLesionados = [];
@@ -323,24 +334,69 @@ export function aplicarPosPartidaCampanha(
     }
   }
 
-  // 1b. Evolução dos jovens da base que atuaram na partida (ponderada pela função e teto)
+  // 1b. Estatísticas de carreira, experiência e evolução orgânica pós-partida (orientada pela carreira)
+  const participantesSet = new Set(resultadoPartida.participantesIds || []);
+  const golsPorJogador = resultadoPartida.golsPorJogador || {};
+  const assistenciasPorJogador = resultadoPartida.assistenciasPorJogador || {};
+  const partidaRelevante = ehChefao || (no?.camada || 1) >= 9;
+  const conquistouTitulo = ehChefao && resultadoFinal === 'vitoria';
+
   const jovensEvoluidos = [];
-  if (mods.jovemEvolucaoPorPartida > 0) {
-    const participantesSet = new Set(resultadoPartida.participantesIds || []);
-    for (const j of estado.elenco) {
-      if (!j.ehJovem || !participantesSet.has(j.id)) continue;
+  const evoluidosCarreira = [];
+
+  for (const j of estado.elenco) {
+    if (!participantesSet.has(j.id)) continue;
+    garantirDesenvolvimentoJogador(j);
+
+    registrarParticipacaoPartidaCarreira(j, {
+      gols: golsPorJogador[j.id] || 0,
+      assistencias: assistenciasPorJogador[j.id] || 0,
+      relevante: partidaRelevante,
+      titulo: conquistouTitulo,
+    });
+
+    // Jovens da base com melhoria de Categorias de Base mantêm evolução ativa pós-jogo (respeitando potencial)
+    if (j.ehJovem && mods.jovemEvolucaoPorPartida > 0) {
       let resEv = null;
       for (let passo = 0; passo < mods.jovemEvolucaoPorPartida; passo += 1) {
         resEv = aplicarEvolucaoPosPartidaJogador(j, rngEvolucao);
       }
       if (resEv && resEv.delta > 0) {
-        jovensEvoluidos.push({
+        const registro = {
           jogadorId: j.id,
           nome: j.nomeCurto,
           atributo: resEv.atributo,
           rotuloAtributo: ROTULOS_ATRIBUTOS[resEv.atributo] || resEv.atributo,
           ganho: resEv.delta,
-        });
+        };
+        jovensEvoluidos.push(registro);
+        evoluidosCarreira.push(registro);
+      }
+    } else {
+      // Evolução orgânica desacoplada da flag ehJovem: qualquer jogador abaixo do potencial
+      // pode ganhar +1 pontual conforme faixa de carreira e experiência acumulada
+      const faixa = obterFaixaCarreira(j.idade);
+      const chanceOrganica =
+        faixa.id === 'formacao'
+          ? 0.2
+          : faixa.id === 'jovem'
+            ? 0.16
+            : faixa.id === 'desenvolvimento'
+              ? 0.09
+              : faixa.id === 'auge'
+                ? 0.03
+                : 0;
+      if (chanceOrganica > 0 && rngEvolucao() < chanceOrganica) {
+        const resEv = aplicarEvolucaoPosPartidaJogador(j, rngEvolucao);
+        if (resEv && resEv.delta > 0) {
+          evoluidosCarreira.push({
+            jogadorId: j.id,
+            nome: j.nomeCurto,
+            atributo: resEv.atributo,
+            rotuloAtributo: ROTULOS_ATRIBUTOS[resEv.atributo] || resEv.atributo,
+            ganho: resEv.delta,
+          });
+        }
       }
     }
   }
@@ -451,6 +507,7 @@ export function aplicarPosPartidaCampanha(
     rendaTotal,
     nomesLesionados,
     jovensEvoluidos,
+    evoluidosCarreira,
     resumo,
     statusCampanha: estado.status,
   };
@@ -699,10 +756,31 @@ export function escolherPatrocinio(estado, no, ofertaId) {
   return { valido: true, resumo };
 }
 
+function sortearNomeMercadoDisponivel(rng, nomesProibidos) {
+  for (let tentativa = 0; tentativa < 60; tentativa += 1) {
+    const nomeP = NOMES_MERCADO_P[Math.floor(rng() * NOMES_MERCADO_P.length)];
+    const nomeS = NOMES_MERCADO_S[Math.floor(rng() * NOMES_MERCADO_S.length)];
+    const completo = `${nomeP} ${nomeS}`;
+    if (!nomesProibidos.has(completo)) {
+      nomesProibidos.add(completo);
+      return { nome: completo, nomeCurto: nomeP };
+    }
+  }
+  const fallbackP = NOMES_MERCADO_P[Math.floor(rng() * NOMES_MERCADO_P.length)];
+  const sufixo = inteiroAleatorio(10, 99, rng);
+  const completo = `${fallbackP} Junior ${sufixo}`;
+  nomesProibidos.add(completo);
+  return { nome: completo, nomeCurto: fallbackP };
+}
+
 /**
- * Gera 4 jogadores estratégicos no Mercado (mix de composição barata, bom titular,
- * jovem de alto potencial e especialista/estrela rara cara) + N jovens da Base,
- * aplicando eventual desconto do técnico Negociador (−15%).
+ * Gera 4 jogadores estratégicos no Mercado com perfis etários coerentes:
+ * - Promessa (16–21): atributos atuais menores, potencial alto, preço impulsionado pelo teto
+ * - Jogador Pronto (22–29): atributos fortes, potencial próximo do atual
+ * - Veterano (30–35): bons atributos atuais, potencial limitado, mais barato que equivalente jovem
+ * - Veterano de Experiência (32+): físico menor, mental/técnico/tático elevado, acessível e útil
+ * (ou Destaque raro em camadas avançadas) + N jovens da Base (16–19).
+ * Nunca regenera jogadores aposentados.
  */
 export function gerarOfertasMercado(estado, no) {
   const mods = obterModsCampanha(estado);
@@ -710,8 +788,19 @@ export function gerarOfertasMercado(estado, no) {
   const fatorPreco = mods.fatorPrecoMercado ?? 1;
   const qtdJovens = mods.jovensNoMercado || 0;
   const camada = no?.camada || 1;
+  const temporada = estado.temporada || 1;
 
-  const rng = criarRng(`${estado.seed}::mercado::${no.id}`);
+  const rng = criarRng(`${estado.seed}::t${temporada}::mercado::${no.id}`);
+  const nomesProibidos = new Set([
+    ...(estado.elenco || []).map((j) => j.nome),
+    ...(estado.aposentadosNomes || []),
+    ...(estado.historicoAposentados || []).map((a) => a.nome),
+  ]);
+  const aposentadosIdsSet = new Set([
+    ...(estado.aposentadosIds || []),
+    ...(estado.historicoAposentados || []).map((a) => a.id),
+  ]);
+
   const modelosPos = [
     { posicao: 'GOL', papel: 'GOL', setor: 'GOL', ehGoleiro: true },
     { posicao: 'ZAG', papel: 'ZAG2', setor: 'DEF', ehGoleiro: false },
@@ -731,26 +820,30 @@ export function gerarOfertasMercado(estado, no) {
     escolhidos.push(poolPos.splice(idx, 1)[0]);
   }
 
-  const montarAtributosComIdentidade = (spec, nivelAlvo, especialista = false) => {
-    const spread = especialista ? 10 : 7;
+  const montarAtributosComIdentidade = (
+    spec,
+    nivelAlvo,
+    { especialista = false, perfilVeteranoExperiencia = false } = {},
+  ) => {
+    const spread = especialista ? 9 : 6;
     const attr = (bias = 0) =>
-      Math.max(18, Math.min(96, Math.round(nivelAlvo + bias + inteiroAleatorio(-spread, spread, rng))));
+      Math.max(18, Math.min(94, Math.round(nivelAlvo + bias + inteiroAleatorio(-spread, spread, rng))));
 
     if (spec.ehGoleiro) {
       return {
-        passe: attr(-10),
-        dominio: attr(-10),
-        posicionamento: attr(especialista ? 8 : 3),
+        passe: attr(perfilVeteranoExperiencia ? -2 : -10),
+        dominio: attr(perfilVeteranoExperiencia ? -2 : -10),
+        posicionamento: attr(perfilVeteranoExperiencia ? 10 : especialista ? 8 : 3),
         marcacao: attr(-20),
-        interceptacao: attr(-6),
+        interceptacao: attr(-4),
         desarme: attr(-20),
-        velocidade: attr(-14),
-        tecnica: attr(-12),
+        velocidade: attr(perfilVeteranoExperiencia ? -20 : -14),
+        tecnica: attr(-10),
         dibre: attr(-22),
         finalizacao: attr(-26),
         agressividade: inteiroAleatorio(18, 34, rng),
-        concentracao: attr(especialista ? 7 : 2),
-        defesa: attr(especialista ? 10 : 5),
+        concentracao: attr(perfilVeteranoExperiencia ? 12 : especialista ? 7 : 2),
+        defesa: attr(especialista ? 9 : 5),
       };
     }
 
@@ -761,95 +854,128 @@ export function gerarOfertasMercado(estado, no) {
     const ehPONTA = spec.posicao === 'PE' || spec.posicao === 'PD';
     const ehCA = spec.posicao === 'CA';
 
+    const ajusteVelVet = perfilVeteranoExperiencia ? -13 : 0;
+    const ajusteMentalVet = perfilVeteranoExperiencia ? 11 : 0;
+    const ajusteTaticoVet = perfilVeteranoExperiencia ? 8 : 0;
+
     return {
-      passe: attr(ehMEI ? (especialista ? 12 : 7) : ehVOL ? 4 : ehZAG ? -9 : ehCA ? -10 : 0),
-      dominio: attr(ehMEI || ehCA || ehPONTA ? 5 : ehZAG ? -9 : 0),
-      posicionamento: attr(ehZAG || ehVOL || ehCA ? 5 : 0),
-      marcacao: attr(ehZAG ? (especialista ? 12 : 7) : ehVOL ? 6 : ehLAT ? 1 : ehCA || ehPONTA ? -20 : -11),
-      interceptacao: attr(ehVOL ? (especialista ? 12 : 7) : ehZAG ? 5 : ehCA || ehPONTA ? -18 : -8),
-      desarme: attr(ehZAG ? (especialista ? 12 : 7) : ehVOL ? 6 : ehLAT ? 1 : ehCA || ehPONTA ? -20 : -11),
-      velocidade: attr(ehPONTA ? (especialista ? 14 : 9) : ehLAT ? 8 : ehZAG ? -10 : ehVOL ? -6 : 0),
-      tecnica: attr(ehMEI ? (especialista ? 11 : 7) : ehPONTA ? 6 : ehZAG ? -12 : 0),
-      dibre: attr(ehPONTA ? (especialista ? 14 : 9) : ehMEI ? 6 : ehLAT ? 2 : ehZAG ? -18 : -2),
-      finalizacao: attr(ehCA ? (especialista ? 14 : 9) : ehPONTA ? 5 : ehMEI ? 0 : ehZAG ? -22 : -12),
+      passe: attr(
+        (ehMEI ? (especialista ? 11 : 7) : ehVOL ? 4 : ehZAG ? -9 : ehCA ? -10 : 0) +
+          (perfilVeteranoExperiencia ? 6 : 0),
+      ),
+      dominio: attr(
+        (ehMEI || ehCA || ehPONTA ? 5 : ehZAG ? -9 : 0) + (perfilVeteranoExperiencia ? 5 : 0),
+      ),
+      posicionamento: attr((ehZAG || ehVOL || ehCA ? 5 : 0) + ajusteTaticoVet),
+      marcacao: attr(
+        ehZAG ? (especialista ? 11 : 7) : ehVOL ? 6 : ehLAT ? 1 : ehCA || ehPONTA ? -20 : -11,
+      ),
+      interceptacao: attr(
+        (ehVOL ? (especialista ? 11 : 7) : ehZAG ? 5 : ehCA || ehPONTA ? -18 : -8) +
+          (perfilVeteranoExperiencia ? 5 : 0),
+      ),
+      desarme: attr(
+        ehZAG ? (especialista ? 11 : 7) : ehVOL ? 6 : ehLAT ? 1 : ehCA || ehPONTA ? -20 : -11,
+      ),
+      velocidade: attr(
+        (ehPONTA ? (especialista ? 12 : 8) : ehLAT ? 7 : ehZAG ? -10 : ehVOL ? -6 : 0) +
+          ajusteVelVet,
+      ),
+      tecnica: attr(
+        (ehMEI ? (especialista ? 10 : 7) : ehPONTA ? 6 : ehZAG ? -12 : 0) +
+          (perfilVeteranoExperiencia ? 6 : 0),
+      ),
+      dibre: attr(
+        (ehPONTA ? (especialista ? 12 : 8) : ehMEI ? 6 : ehLAT ? 2 : ehZAG ? -18 : -2) +
+          (perfilVeteranoExperiencia ? -4 : 0),
+      ),
+      finalizacao: attr(ehCA ? (especialista ? 12 : 8) : ehPONTA ? 5 : ehMEI ? 0 : ehZAG ? -22 : -12),
       agressividade: inteiroAleatorio(26, 74, rng),
-      concentracao: attr(ehZAG || ehVOL ? 4 : ehPONTA ? -4 : 0),
+      concentracao: attr((ehZAG || ehVOL ? 4 : ehPONTA ? -4 : 0) + ajusteMentalVet),
     };
   };
 
-  // 4 arquétipos distintos por mercado para decisões estratégicas reais
+  // 4 arquétipos distintos alinhados ao ciclo de carreira
+  const bonusCamada = Math.min(6, Math.floor(camada / 2));
   const arquetipos = [
     {
-      id: 'composicao',
-      rotulo: 'Opção econômica',
-      nivelMin: 43,
-      nivelMax: 50,
-      idadeMin: 24,
-      idadeMax: 30,
+      id: 'promessa',
+      rotulo: 'Promessa',
+      nivelMin: 40,
+      nivelMax: 47,
+      idadeMin: 16,
+      idadeMax: 21,
+      potBonusMin: 20,
+      potBonusMax: 34,
+      especialista: true,
+      perfilVeteranoExperiencia: false,
+      chanceHab: 0.35,
+    },
+    {
+      id: 'jogador_pronto',
+      rotulo: 'Jogador pronto',
+      nivelMin: 53 + bonusCamada,
+      nivelMax: 61 + bonusCamada,
+      idadeMin: 22,
+      idadeMax: 29,
       potBonusMin: 2,
       potBonusMax: 8,
-      especialista: false,
-      chanceHab: 0.25,
+      especialista: true,
+      perfilVeteranoExperiencia: false,
+      chanceHab: 0.72,
     },
     {
-      id: 'titular',
-      rotulo: 'Reforço imediato',
-      nivelMin: 52 + Math.min(5, Math.floor(camada / 2)),
-      nivelMax: 60 + Math.min(6, Math.floor(camada / 2)),
-      idadeMin: 23,
-      idadeMax: 28,
-      potBonusMin: 4,
-      potBonusMax: 12,
+      id: 'veterano',
+      rotulo: 'Veterano',
+      nivelMin: 51 + Math.min(5, bonusCamada),
+      nivelMax: 59 + Math.min(5, bonusCamada),
+      idadeMin: 30,
+      idadeMax: 35,
+      potBonusMin: 0,
+      potBonusMax: 3,
       especialista: false,
+      perfilVeteranoExperiencia: false,
       chanceHab: 0.65,
     },
-    {
-      id: 'promessa',
-      rotulo: 'Jovem promessa',
-      nivelMin: 41,
-      nivelMax: 50,
-      idadeMin: 18,
-      idadeMax: 20,
-      potBonusMin: 22,
-      potBonusMax: 36,
-      especialista: true,
-      chanceHab: 0.4,
-    },
-    camada >= 5 && rng() < 0.35
+    camada >= 6 && rng() < 0.3
       ? {
           id: 'craque_raro',
           rotulo: 'Destaque raro',
-          nivelMin: 68,
-          nivelMax: 78,
-          idadeMin: 22,
-          idadeMax: 27,
-          potBonusMin: 8,
-          potBonusMax: 16,
+          nivelMin: 66,
+          nivelMax: 76,
+          idadeMin: 23,
+          idadeMax: 28,
+          potBonusMin: 4,
+          potBonusMax: 12,
           especialista: true,
+          perfilVeteranoExperiencia: false,
           chanceHab: 0.95,
         }
       : {
-          id: 'especialista',
-          rotulo: 'Especialista',
-          nivelMin: 57 + Math.min(6, Math.floor(camada / 2)),
-          nivelMax: 65 + Math.min(6, Math.floor(camada / 2)),
-          idadeMin: 22,
-          idadeMax: 29,
-          potBonusMin: 6,
-          potBonusMax: 16,
-          especialista: true,
-          chanceHab: 0.8,
+          id: 'veterano_experiencia',
+          rotulo: 'Veterano de experiência',
+          nivelMin: 48 + Math.min(4, bonusCamada),
+          nivelMax: 55 + Math.min(4, bonusCamada),
+          idadeMin: 32,
+          idadeMax: 36,
+          potBonusMin: 0,
+          potBonusMax: 2,
+          especialista: false,
+          perfilVeteranoExperiencia: true,
+          chanceHab: 0.78,
         },
   ];
 
   const ofertasRegulares = escolhidos.map((spec, idx) => {
     const arq = arquetipos[idx % arquetipos.length];
     const nivelAlvo = inteiroAleatorio(arq.nivelMin, arq.nivelMax, rng);
-    const idade = inteiroAleatorio(arq.idadeMin, arq.idadeMax, rng);
-    const nomeP = NOMES_MERCADO_P[Math.floor(rng() * NOMES_MERCADO_P.length)];
-    const nomeS = NOMES_MERCADO_S[Math.floor(rng() * NOMES_MERCADO_S.length)];
+    const idade = normalizarIdade(inteiroAleatorio(arq.idadeMin, arq.idadeMax, rng), 24);
+    const { nome, nomeCurto } = sortearNomeMercadoDisponivel(rng, nomesProibidos);
 
-    const atributos = montarAtributosComIdentidade(spec, nivelAlvo, arq.especialista);
+    const atributos = montarAtributosComIdentidade(spec, nivelAlvo, {
+      especialista: arq.especialista,
+      perfilVeteranoExperiencia: arq.perfilVeteranoExperiencia,
+    });
     const peRoll = rng();
     const peDominante =
       spec.posicao === 'LE'
@@ -862,10 +988,15 @@ export function gerarOfertasMercado(estado, no) {
               ? 'esquerdo'
               : 'direito';
 
+    let idCandidato = `mer_t${temporada}_${no.id}_${idx}`;
+    while (aposentadosIdsSet.has(idCandidato)) {
+      idCandidato = `${idCandidato}_n`;
+    }
+
     const jogador = {
-      id: `mer_${no.id}_${idx}`,
-      nome: `${nomeP} ${nomeS}`,
-      nomeCurto: nomeP,
+      id: idCandidato,
+      nome,
+      nomeCurto,
       posicao: spec.posicao,
       papel: spec.papel,
       setor: spec.setor,
@@ -874,6 +1005,7 @@ export function gerarOfertasMercado(estado, no) {
       ehMercado: true,
       nivelObservacao: 1,
       arquetipoMercado: arq.rotulo,
+      arquetipoMercadoId: arq.id,
       idade,
       peDominante,
       qualidadePeFraco: peDominante === 'ambidestro' ? 5 : inteiroAleatorio(1, 4, rng),
@@ -894,10 +1026,13 @@ export function gerarOfertasMercado(estado, no) {
     const notaAtual = Math.round(calcularMediaJogador(jogador));
     jogador.potencial = Math.min(
       94,
-      notaAtual + inteiroAleatorio(arq.potBonusMin, arq.potBonusMax, rng),
+      Math.max(notaAtual, notaAtual + inteiroAleatorio(arq.potBonusMin, arq.potBonusMax, rng)),
     );
     const curvas = ['precoce', 'equilibrada', 'tardia'];
     jogador.curvaDesenvolvimento = curvas[Math.floor(rng() * curvas.length)];
+    if (arq.perfilVeteranoExperiencia) {
+      jogador.experiencia = inteiroAleatorio(78, 94, rng);
+    }
     garantirDesenvolvimentoJogador(jogador);
 
     const compativeis = habsPool.filter((h) => jogadorPodeTerHabilidade(jogador, h));
@@ -912,6 +1047,7 @@ export function gerarOfertasMercado(estado, no) {
       indice: idx,
       ehJovem: false,
       arquetipo: arq.rotulo,
+      arquetipoId: arq.id,
       jogador,
       precoBase,
       preco,
@@ -919,7 +1055,7 @@ export function gerarOfertasMercado(estado, no) {
     };
   });
 
-  // Jovens promissores das Categorias de Base (variados, baratos, alto potencial, evoluem por jogo)
+  // Jovens promissores das Categorias de Base (16–19 anos, baratos, alto potencial, integrados ao ciclo de carreira)
   const ofertasJovens = [];
   const poolJovemPos = modelosPos.filter((m) => !m.ehGoleiro);
   for (let k = 0; k < qtdJovens; k += 1) {
@@ -927,10 +1063,9 @@ export function gerarOfertasMercado(estado, no) {
       k === qtdJovens - 1 && qtdJovens >= 4
         ? modelosPos[0]
         : poolJovemPos[Math.floor(rng() * poolJovemPos.length)];
-    const nomeP = NOMES_MERCADO_P[Math.floor(rng() * NOMES_MERCADO_P.length)];
-    const nomeS = NOMES_MERCADO_S[Math.floor(rng() * NOMES_MERCADO_S.length)];
-    const baseJovem = inteiroAleatorio(40, 48, rng);
-    const atributos = montarAtributosComIdentidade(spec, baseJovem, true);
+    const { nome, nomeCurto } = sortearNomeMercadoDisponivel(rng, nomesProibidos);
+    const baseJovem = inteiroAleatorio(39, 47, rng);
+    const atributos = montarAtributosComIdentidade(spec, baseJovem, { especialista: true });
 
     const peRoll = rng();
     const peDominante =
@@ -945,9 +1080,9 @@ export function gerarOfertasMercado(estado, no) {
               : 'direito';
 
     const jogador = {
-      id: `jovem_${no.id}_${k}`,
-      nome: `${nomeP} ${nomeS}`,
-      nomeCurto: nomeP,
+      id: `jovem_t${temporada}_${no.id}_${k}`,
+      nome,
+      nomeCurto,
       posicao: spec.posicao,
       papel: spec.papel,
       setor: spec.setor,
@@ -956,10 +1091,11 @@ export function gerarOfertasMercado(estado, no) {
       ehMercado: true,
       nivelObservacao: 1,
       arquetipoMercado: 'Joia da Base',
-      idade: inteiroAleatorio(17, 19, rng),
+      arquetipoMercadoId: 'base',
+      idade: normalizarIdade(inteiroAleatorio(16, 19, rng), 18),
       peDominante,
       qualidadePeFraco: peDominante === 'ambidestro' ? 5 : inteiroAleatorio(1, 3, rng),
-      potencial: inteiroAleatorio(66, 86, rng),
+      potencial: inteiroAleatorio(66, 84, rng),
       curvaDesenvolvimento: rng() < 0.5 ? 'precoce' : 'equilibrada',
       lesionado: false,
       iniciaComBola: false,
@@ -983,6 +1119,7 @@ export function gerarOfertasMercado(estado, no) {
       indice,
       ehJovem: true,
       arquetipo: 'Joia da Base',
+      arquetipoId: 'base',
       jogador,
       precoBase,
       preco,
@@ -1008,8 +1145,17 @@ export function comprarJogadorMercado(estado, no, ofertaMercado, ofertasAtuais) 
   }
 
   estado.dinheiro -= ofertaMercado.preco;
+  const idadeContratado = normalizarIdade(ofertaMercado.jogador?.idade, 24);
   const contratado = structuredClone(ofertaMercado.jogador);
   contratado.id = `cmp_${no.id}_${Date.now().toString(36).slice(-4)}_${ofertaMercado.indice}`;
+  // Jogador contratado durante a temporada mantém exatamente sua idade atual
+  contratado.idade = idadeContratado;
+  contratado.ehMercado = false;
+  contratado.nivelObservacao = 2;
+  contratado.temporadaContratacao = estado.temporada || 1;
+  contratado.partidasNaTemporada = 0;
+  garantirDesenvolvimentoJogador(contratado);
+
   estado.elenco.push(contratado);
   ofertaMercado.comprado = true;
 
@@ -1020,7 +1166,7 @@ export function comprarJogadorMercado(estado, no, ofertaMercado, ofertasAtuais) 
   return {
     valido: true,
     jogador: contratado,
-    resumo: `${contratado.nome} (${contratado.posicao}) contratado por $${ofertaMercado.preco}.`,
+    resumo: `${contratado.nome} (${contratado.posicao}, ${contratado.idade} anos) contratado por $${ofertaMercado.preco}.`,
   };
 }
 
@@ -1150,6 +1296,311 @@ export function concluirMisteriosoDireto(estado, no, desfechoMisterioso) {
     return { valido: true, resumo };
   }
   return { valido: false, motivo: 'Este resultado misterioso exige interação própria.' };
+}
+
+/**
+ * Promove um jovem da base (16–18 anos) como reposição de emergência caso aposentadorias
+ * deixem o clube abaixo do mínimo de jogadores ou sem goleiro.
+ */
+function criarReposicaoBaseEmergencia(estado, { ehGoleiro = false, indice = 0, rng }) {
+  const nomesProibidos = new Set([
+    ...(estado.elenco || []).map((j) => j.nome),
+    ...(estado.aposentadosNomes || []),
+    ...(estado.historicoAposentados || []).map((a) => a.nome),
+  ]);
+  const { nome, nomeCurto } = sortearNomeMercadoDisponivel(rng, nomesProibidos);
+  const spec = ehGoleiro
+    ? { posicao: 'GOL', papel: 'GOL', setor: 'GOL', ehGoleiro: true }
+    : { posicao: 'ME', papel: 'MEI_E', setor: 'MEI', ehGoleiro: false };
+  const base = inteiroAleatorio(39, 45, rng);
+  const s = (b = 0) => Math.max(20, Math.min(72, Math.round(base + b + inteiroAleatorio(-4, 4, rng))));
+
+  const atributos = ehGoleiro
+    ? {
+        passe: s(-8),
+        dominio: s(-8),
+        posicionamento: s(3),
+        marcacao: s(-18),
+        interceptacao: s(-6),
+        desarme: s(-18),
+        velocidade: s(-12),
+        tecnica: s(-10),
+        dibre: s(-20),
+        finalizacao: s(-24),
+        agressividade: inteiroAleatorio(20, 34, rng),
+        concentracao: s(2),
+        defesa: s(5),
+      }
+    : {
+        passe: s(5),
+        dominio: s(4),
+        posicionamento: s(2),
+        marcacao: s(-6),
+        interceptacao: s(-2),
+        desarme: s(-6),
+        velocidade: s(4),
+        tecnica: s(5),
+        dibre: s(4),
+        finalizacao: s(-2),
+        agressividade: inteiroAleatorio(30, 58, rng),
+        concentracao: s(1),
+      };
+
+  const jovem = {
+    id: `base_t${estado.temporada || 1}_${indice}`,
+    nome,
+    nomeCurto,
+    posicao: spec.posicao,
+    papel: spec.papel,
+    setor: spec.setor,
+    ehGoleiro: spec.ehGoleiro,
+    ehJovem: true,
+    idade: normalizarIdade(inteiroAleatorio(16, 18, rng), 17),
+    potencial: inteiroAleatorio(62, 78, rng),
+    lesionado: false,
+    iniciaComBola: false,
+    zona: null,
+    zonaBase: null,
+    atributos,
+    mental: { concentracao: atributos.concentracao },
+    extras: {
+      estamina: 100,
+      habilidades: [],
+      cartoes: { amarelos: 0, vermelho: false },
+      substituido: false,
+    },
+  };
+  return garantirDesenvolvimentoJogador(jovem);
+}
+
+/**
+ * Orquestrador central da passagem de temporada (`avancarTemporada()`).
+ *
+ * Protegido contra execução duplicada na mesma virada (via `temporadaEsperada` ou `chaveTransicao`):
+ * 1) Incrementa `estado.temporada` (+1)
+ * 2) Envelhece todos os jogadores ativos (+1 ano)
+ * 3) Aplica desenvolvimento sazonal direcionado (respeitando potencial como teto)
+ * 4) Aplica declínio gradual individualizado (físicos primeiro; mentais/técnicos resistentes)
+ * 5) Avalia aposentadorias → remove do elenco ativo, grava registro completo no histórico
+ *    e exclui futuros retornos no mercado (garantindo mínimo de elenco / 1 goleiro)
+ * 6) Atualiza histórico da campanha e prepara mercado/mapa para a nova temporada
+ */
+export function avancarTemporada(
+  estado,
+  {
+    rng = null,
+    temporadaEsperada = null,
+    chaveTransicao = null,
+    prepararNovoMapa = true,
+  } = {},
+) {
+  if (!estado || !Array.isArray(estado.elenco)) {
+    return { avancou: false, motivo: 'Estado de campanha inválido.' };
+  }
+
+  const temporadaAtual = typeof estado.temporada === 'number' && estado.temporada >= 1
+    ? estado.temporada
+    : 1;
+  estado.temporada = temporadaAtual;
+
+  // Proteção explícita contra execução duplicada na mesma virada de temporada
+  if (typeof temporadaEsperada === 'number' && temporadaAtual !== temporadaEsperada) {
+    return {
+      avancou: false,
+      jaExecutada: true,
+      temporadaAtual,
+      motivo: `Temporada ${temporadaEsperada} já foi avançada.`,
+    };
+  }
+  if (chaveTransicao && estado.ultimaChaveTransicaoTemporada === chaveTransicao) {
+    return {
+      avancou: false,
+      jaExecutada: true,
+      temporadaAtual,
+      motivo: 'Transição de temporada já executada.',
+    };
+  }
+
+  const rngEfetivo =
+    typeof rng === 'function'
+      ? rng
+      : criarRng(`${estado.seed}::avancar_temporada::t${temporadaAtual}`);
+
+  const novaTemporada = temporadaAtual + 1;
+  estado.temporada = novaTemporada;
+  estado.ultimaTemporadaAvancada = temporadaAtual;
+  if (chaveTransicao) {
+    estado.ultimaChaveTransicaoTemporada = chaveTransicao;
+  }
+
+  if (!Array.isArray(estado.historicoAposentados)) estado.historicoAposentados = [];
+  if (!Array.isArray(estado.aposentadosIds)) estado.aposentadosIds = [];
+  if (!Array.isArray(estado.aposentadosNomes)) estado.aposentadosNomes = [];
+
+  const envelhecidos = [];
+  const desenvolvidos = [];
+  const declinios = [];
+  const aposentados = [];
+  const promovidosBase = [];
+  const elencoRestante = [];
+
+  const nomeClube = estado.clubeNome || 'Atlético Brisa';
+
+  for (const jogador of estado.elenco) {
+    garantirDesenvolvimentoJogador(jogador);
+
+    // 1. Envelhecer +1 ano
+    const env = envelhecerJogador(jogador, 1);
+    envelhecidos.push({
+      id: jogador.id,
+      nome: jogador.nomeCurto || jogador.nome,
+      idadeAntes: env.idadeAntes,
+      idadeDepois: env.idadeDepois,
+      faixa: env.faixaCarreira.id,
+    });
+
+    // 2. Desenvolvimento sazonal
+    const dev = aplicarDesenvolvimentoTemporada(jogador, rngEfetivo);
+    jogador.partidasNaTemporada = 0;
+    if (dev.evoluiu && dev.alteracoes.length > 0) {
+      desenvolvidos.push({
+        id: jogador.id,
+        nome: jogador.nomeCurto || jogador.nome,
+        alteracoes: dev.alteracoes,
+      });
+    }
+
+    // 3. Declínio gradual individualizado
+    const dec = aplicarDeclinioTemporada(jogador, rngEfetivo);
+    if (dec.declinou && dec.alteracoes.length > 0) {
+      declinios.push({
+        id: jogador.id,
+        nome: jogador.nomeCurto || jogador.nome,
+        alteracoes: dec.alteracoes,
+      });
+    }
+
+    // 4. Avaliação de aposentadoria
+    const avApos = avaliarAposentadoriaJogador(jogador, rngEfetivo);
+    if (avApos.aposentou) {
+      jogador.aposentado = true;
+      const registro = criarRegistroAposentadoria(jogador, {
+        clube: nomeClube,
+        temporada: temporadaAtual,
+      });
+      estado.historicoAposentados.push(registro);
+      if (!estado.aposentadosIds.includes(jogador.id)) {
+        estado.aposentadosIds.push(jogador.id);
+      }
+      if (!estado.aposentadosNomes.includes(jogador.nome)) {
+        estado.aposentadosNomes.push(jogador.nome);
+      }
+      aposentados.push(registro);
+      continue;
+    }
+
+    // Recuperação de pré-temporada para quem segue ativo
+    jogador.lesionado = false;
+    if (!jogador.extras) jogador.extras = {};
+    jogador.extras.estamina = 100;
+    elencoRestante.push(jogador);
+  }
+
+  estado.elenco = elencoRestante;
+
+  // Garante mínimo de 1 goleiro e mínimo de 11 jogadores no elenco para evitar soft-lock
+  let idxRep = 0;
+  if (!estado.elenco.some((j) => j.ehGoleiro)) {
+    const golBase = criarReposicaoBaseEmergencia(estado, {
+      ehGoleiro: true,
+      indice: idxRep,
+      rng: rngEfetivo,
+    });
+    idxRep += 1;
+    estado.elenco.push(golBase);
+    promovidosBase.push(golBase);
+  }
+  while (estado.elenco.length < CAMPANHA_CONFIG.minElenco) {
+    const rep = criarReposicaoBaseEmergencia(estado, {
+      ehGoleiro: false,
+      indice: idxRep,
+      rng: rngEfetivo,
+    });
+    idxRep += 1;
+    estado.elenco.push(rep);
+    promovidosBase.push(rep);
+  }
+
+  // 5. Preparar estado de mercado e pré-temporada
+  estado.mercadoTemporada = novaTemporada;
+  estado.mediaInicialTitulares = calcularMediaTitularesInicial(estado.elenco);
+
+  const partesResumo = [
+    `Início da Temporada ${novaTemporada}: elenco envelheceu +1 ano.`,
+  ];
+  if (desenvolvidos.length > 0) {
+    partesResumo.push(`${desenvolvidos.length} atleta(s) evoluíram.`);
+  }
+  if (declinios.length > 0) {
+    partesResumo.push(`${declinios.length} veterano(s) sentiram desgaste físico.`);
+  }
+  if (aposentados.length > 0) {
+    partesResumo.push(
+      `Aposentadoria(s): ${aposentados.map((a) => `${a.nome} (${a.idadeAposentadoria}a)`).join(', ')}.`,
+    );
+  }
+  const resumo = partesResumo.join(' ');
+
+  estado.resumoUltimaTemporada = {
+    temporadaAnterior: temporadaAtual,
+    temporadaNova: novaTemporada,
+    envelhecidos,
+    desenvolvidos,
+    declinios,
+    aposentados,
+    promovidosBase: promovidosBase.map((j) => ({ id: j.id, nome: j.nome, posicao: j.posicao })),
+    resumo,
+  };
+
+  estado.historico.unshift({
+    camada: 0,
+    noId: `temporada_${novaTemporada}`,
+    tipo: 'temporada',
+    resumo,
+  });
+
+  // 6. Regenerar mapa e reabrir jornada caso solicitado para continuar a carreira
+  if (prepararNovoMapa) {
+    const mods = obterModsCampanha(estado);
+    const bonusDificuldade = mods.bonusForcaRival || 0;
+    estado.mapa = gerarMapaCampanha(
+      `${estado.seed}::T${novaTemporada}`,
+      estado.mediaInicialTitulares,
+      bonusDificuldade,
+    );
+    estado.noAtualId = null;
+    estado.camadaAtual = 0;
+    estado.nosVisitados = [];
+    estado.noPendente = null;
+    estado.derrotasSeguidas = 0;
+    estado.moral = 0;
+    estado.status = 'em_andamento';
+    estado.motivoFim = '';
+    estado.metaFinalizada = false;
+  }
+
+  return {
+    avancou: true,
+    jaExecutada: false,
+    temporadaAnterior: temporadaAtual,
+    temporadaNova: novaTemporada,
+    envelhecidos,
+    desenvolvidos,
+    declinios,
+    aposentados,
+    promovidosBase,
+    resumo,
+  };
 }
 
 /**

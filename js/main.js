@@ -21,6 +21,7 @@ import {
   aplicarFisioterapia,
   aplicarPosPartidaCampanha,
   aplicarTorcida,
+  avancarTemporada,
   iniciarNovaCampanha,
   montarTimeParaPartida,
 } from './campanha/nos.js';
@@ -225,6 +226,7 @@ function iniciarJogo() {
   const elModalElenco = document.getElementById('modal-elenco-campanha');
   const elListaElenco = document.getElementById('lista-elenco-campanha');
   const elBtnFecharElenco = document.getElementById('btn-fechar-elenco');
+  const elBtnFimCampProximaTemporada = document.getElementById('btn-fim-camp-proxima-temporada');
   const elBtnFimCampClube = document.getElementById('btn-fim-camp-clube');
   const elBtnFimCampRepetirSeed = document.getElementById('btn-fim-camp-repetir-seed');
   const elBtnFimCampNova = document.getElementById('btn-fim-camp-nova');
@@ -1622,6 +1624,21 @@ function iniciarJogo() {
   });
 
   elBtnCampTitulo?.addEventListener('click', irParaTitulo);
+
+  elBtnFimCampProximaTemporada?.addEventListener('click', () => {
+    if (!campanha || campanha.status !== 'vitoria') return;
+    const tempAtual = campanha.temporada || 1;
+    const res = avancarTemporada(campanha, {
+      temporadaEsperada: tempAtual,
+      chaveTransicao: `ui_t${tempAtual}`,
+      prepararNovoMapa: true,
+    });
+    if (!res?.avancou) return;
+    resultadoMetaFimCampanha = null;
+    salvarCampanha(campanha);
+    som.clique();
+    irParaMapaCampanha();
+  });
 
   elBtnFimCampClube?.addEventListener('click', () => {
     som.clique();

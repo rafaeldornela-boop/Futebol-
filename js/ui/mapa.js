@@ -41,11 +41,12 @@ export function renderizarHudCampanha(estado) {
   const nomeClube = estado.clubeNome || 'Atlético Brisa';
   const dif = estado.dificuldade || 0;
   const nomeTec = estado.tecnicoNome || 'Clássico';
+  const temp = estado.temporada || 1;
   if (elClube) {
-    elClube.textContent = `${nomeClube} · Nív. ${dif} · Téc. ${nomeTec}`;
+    elClube.textContent = `${nomeClube} · Temp. ${temp} · Nív. ${dif} · Téc. ${nomeTec}`;
   }
   if (elTituloElenco) {
-    elTituloElenco.textContent = `Elenco — ${nomeClube}`;
+    elTituloElenco.textContent = `Elenco — ${nomeClube} (Temp. ${temp})`;
   }
   if (elSeed) elSeed.textContent = estado.seed;
   if (elDinheiro) elDinheiro.textContent = `$${estado.dinheiro}`;
@@ -214,11 +215,11 @@ export function renderizarMapaCampanha(estado, { onSelecionarNo } = {}) {
     } else {
       for (const h of estado.historico.slice(0, 8)) {
         const card = criarElemento('div', 'camp-historico-item');
-        const topo = criarElemento(
-          'div',
-          'camp-historico-topo',
-          `F${h.camada} · ${METADADOS_NO[h.tipo]?.nome || h.tipo}`,
-        );
+        const topoTexto =
+          h.tipo === 'temporada'
+            ? 'Virada de Temporada'
+            : `F${h.camada} · ${METADADOS_NO[h.tipo]?.nome || h.tipo}`;
+        const topo = criarElemento('div', 'camp-historico-topo', topoTexto);
         const desc = criarElemento('div', 'camp-historico-desc', h.resumo || '');
         card.append(topo, desc);
         elHistorico.appendChild(card);

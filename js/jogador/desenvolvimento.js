@@ -15,6 +15,11 @@ import {
   normalizarChavePosicao,
   PESOS_AVALIACAO_POSICIONAL,
 } from './identidade.js';
+import {
+  calcularTetoEstritoAtributo,
+  garantirCarreiraJogador,
+  obterFaixaCarreira,
+} from './carreira.js';
 
 export const CURVAS_DESENVOLVIMENTO = Object.freeze({
   precoce: Object.freeze({
@@ -49,10 +54,10 @@ export const DESENVOLVIMENTO_CONFIG = Object.freeze({
   ganhoMaximoTreino: 5,
   ganhoMinimoTreino: 1,
   tetoAbsoluto: 94,
-  // Bônus máximo acima do potencial geral em atributos-assinatura da posição
-  folgaAtributoPrincipal: 9,
+  // Atributos-assinatura podem alcançar até o potencial individual (nunca ultrapassando-o)
+  folgaAtributoPrincipal: 0,
   // Limite abaixo do potencial geral para atributos fora da identidade do jogador
-  reducaoAtributoSecundario: 10,
+  reducaoAtributoSecundario: 12,
 });
 
 function hashDeterministico(texto) {
@@ -89,12 +94,13 @@ export function deduzirPotencialPadrao(jogador) {
 }
 
 /**
- * Garante que o jogador tenha todos os metadados de desenvolvimento e scouting
+ * Garante que o jogador tenha todos os metadados de desenvolvimento, carreira e scouting
  * sem sobrescrever valores já definidos.
  */
 export function garantirDesenvolvimentoJogador(jogador) {
   if (!jogador || typeof jogador !== 'object') return jogador;
   garantirIdentidadeJogador(jogador);
+  garantirCarreiraJogador(jogador);
 
   if (typeof jogador.potencial !== 'number' || !Number.isFinite(jogador.potencial)) {
     jogador.potencial = deduzirPotencialPadrao(jogador);
@@ -123,51 +129,39 @@ export function garantirDesenvolvimentoJogador(jogador) {
 
 /**
  * Calcula o teto realista de um atributo específico para este jogador,
- * respeitando seu potencial geral e sua identidade posicional (um zagueiro puro
- * não vai treinar finalização até 90, e um centroavante não vira zagueiro de elite).
+ * respeitando ESTRITAMENTE seu potencial individual e sua identidade posicional
+ * (um zagueiro puro não treina finalização até 90, e nenhum jogador ultrapassa o seu potencial).
  */
 export function calcularTetoAtributoJogador(jogador, chaveAtributo) {
   garantirDesenvolvimentoJogador(jogador);
 
   const potencial = jogador.potencial;
   const valorAtual = jogador.atributos?.[chaveAtributo] ?? 45;
-  const posChave = normalizarChavePosicao(jogador);
-  const pesos = PESOS_AVALIACAO_POSICIONAL[posChave] || PESOS_AVALIACAO_POSICIONAL.MEI;
-  const pesoPosicional = pesos[chaveAtributo] || 0;
-
-  let deslocamento = 0;
-  if (pesoPosicional >= 0.18) {
-    deslocamento = DESENVOLVIMENTO_CONFIG.folgaAtributoPrincipal;
-  } else if (pesoPosicional >= 0.1) {
-    deslocamento = 4;
-  } else if (chaveAtributo === 'concentracao') {
-    deslocamento = 5;
-  } else if (pesoPosicional > 0) {
-    deslocamento = 0;
-  } else {
-    deslocamento = -DESENVOLVIMENTO_CONFIG.reducaoAtributoSecundario;
-  }
 
   const tetoPersonalizado = jogador.tetoAtributos?.[chaveAtributo];
-  const tetoCalculado =
+  const tetoBase =
     typeof tetoPersonalizado === 'number'
-      ? tetoPersonalizado
-      : Math.min(
-          DESENVOLVIMENTO_CONFIG.tetoAbsoluto,
-          Math.max(30, Math.round(potencial + deslocamento)),
-        );
+      ? Math.min(potencial, tetoPersonalizado)
+      : calcularTetoEstritoAtributo(jogador, chaveAtributo);
 
-  // Nunca reduz abaixo do que o jogador já atingiu
+  const tetoCalculado = Math.min(
+    DESENVOLVIMENTO_CONFIG.tetoAbsoluto,
+    potencial,
+    Math.max(25, Math.round(tetoBase)),
+  );
+
+  // Nunca reduz abaixo do que o jogador já possui no estado atual
   return Math.max(valorAtual, tetoCalculado);
 }
 
 /**
- * Calcula o ganho de atributo num treino aplicando retorno decrescente:
- * - Longe do teto (gap >= 22) e jovem: pode ganhar +4 ou +5
- * - Distância média (gap 12..21): ganha +3
- * - Perto do teto (gap 5..11): ganha +2
- * - Quase no limite (gap 1..4): ganha +1
- * - No teto (gap === 0): ganha 0 (ou +1 apenas em concentração/lapidação rara)
+ * Calcula o ganho de atributo num treino aplicando retorno decrescente
+ * integrado às 7 faixas de carreira (formação até fim de carreira):
+ * - Longe do teto (gap >= 24) e jovem: pode ganhar +4 ou +5
+ * - Distância média (gap 16..23): ganha +3
+ * - Perto do teto (gap 9..15): ganha +2
+ * - Quase no limite (gap 1..8): ganha +1
+ * - No teto (gap === 0) ou avaliação funcional já no potencial: ganha 0
  */
 export function calcularGanhoTreinoAtributo(jogador, chaveAtributo, { intensidade = 1 } = {}) {
   garantirDesenvolvimentoJogador(jogador);
@@ -193,21 +187,17 @@ export function calcularGanhoTreinoAtributo(jogador, chaveAtributo, { intensidad
   const curva =
     CURVAS_DESENVOLVIMENTO[jogador.curvaDesenvolvimento] ||
     CURVAS_DESENVOLVIMENTO.equilibrada;
-  const idade = jogador.idade ?? 24;
+  const faixaCarreira = obterFaixaCarreira(jogador.idade);
 
-  // Fator etário: jovens absorvem mais treino; veteranos progridem mais devagar
-  let fatorIdade = 1.0;
-  if (idade <= 21) {
-    fatorIdade = 1.2 * curva.fatorRitmoJovem;
-  } else if (idade <= curva.idadePico) {
-    fatorIdade = 1.0;
-  } else if (idade <= 29) {
-    fatorIdade = 0.78;
-  } else {
-    fatorIdade = 0.58;
+  // Fator etário guiado pelas faixas de carreira + curva individual
+  let fatorIdade = faixaCarreira.fatorTreino;
+  if (faixaCarreira.id === 'formacao' || faixaCarreira.id === 'jovem') {
+    fatorIdade *= curva.fatorRitmoJovem;
+  } else if (faixaCarreira.id === 'auge' && curva.id === 'tardia') {
+    fatorIdade *= 1.1;
   }
 
-  // Retorno decrescente suave conforme distância para o teto (ex.: 45->50->54->57->59->60)
+  // Retorno decrescente suave conforme distância para o teto
   let ganhoBase;
   if (gap >= 24) {
     ganhoBase = 4.6;
@@ -222,15 +212,26 @@ export function calcularGanhoTreinoAtributo(jogador, chaveAtributo, { intensidad
   }
 
   const ganhoBruto = Math.round(ganhoBase * fatorIdade * intensidade);
-  const ganho = Math.max(
+  let ganho = Math.max(
     DESENVOLVIMENTO_CONFIG.ganhoMinimoTreino,
     Math.min(DESENVOLVIMENTO_CONFIG.ganhoMaximoTreino, gap, ganhoBruto),
   );
 
+  // Garante que o treino nunca empurre a avaliação funcional acima do potencial
+  const potencial = jogador.potencial;
+  while (ganho > 0) {
+    const backup = jogador.atributos[chaveAtributo];
+    jogador.atributos[chaveAtributo] = Math.min(teto, valorAtual + ganho);
+    const novaAval = calcularAvaliacaoPosicional(jogador);
+    jogador.atributos[chaveAtributo] = backup;
+    if (novaAval <= potencial) break;
+    ganho -= 1;
+  }
+
   const valorDepois = Math.min(teto, valorAtual + ganho);
   const margemRestante = Math.max(0, teto - valorDepois);
   const estagio =
-    margemRestante === 0
+    ganho === 0 || margemRestante === 0
       ? 'no_teto'
       : margemRestante <= 5
         ? 'perto_teto'
@@ -250,11 +251,19 @@ export function calcularGanhoTreinoAtributo(jogador, chaveAtributo, { intensidad
 
 /**
  * Registra um marco no histórico de evolução do atleta e atualiza valor + mental se aplicável.
+ * Quando o delta é positivo (treino/evolução), respeita o teto de potencial do jogador.
  */
 export function aplicarEvolucaoAtributo(jogador, chaveAtributo, ganho, origem = 'treino') {
   garantirDesenvolvimentoJogador(jogador);
   const antes = jogador.atributos?.[chaveAtributo] ?? 45;
-  const depois = Math.min(100, Math.max(1, Math.round(antes + ganho)));
+  let alvo = Math.min(100, Math.max(1, Math.round(antes + ganho)));
+
+  if (ganho > 0 && origem !== 'evento_bruto') {
+    const teto = calcularTetoAtributoJogador(jogador, chaveAtributo);
+    alvo = Math.min(teto, Math.max(antes, alvo));
+  }
+
+  const depois = alvo;
   const deltaReal = depois - antes;
 
   jogador.atributos[chaveAtributo] = depois;
@@ -270,7 +279,7 @@ export function aplicarEvolucaoAtributo(jogador, chaveAtributo, ganho, origem = 
       depois,
       delta: deltaReal,
     });
-    if (jogador.historicoEvolucao.length > 24) {
+    if (jogador.historicoEvolucao.length > 30) {
       jogador.historicoEvolucao.shift();
     }
   }
@@ -279,22 +288,31 @@ export function aplicarEvolucaoAtributo(jogador, chaveAtributo, ganho, origem = 
 }
 
 /**
- * Evolução orgânica pós-partida para jovens da base ou atletas abaixo do teto
- * que participaram da partida. Mantém o comportamento de +1 para jovens da base
- * respeitando teto/identidade.
+ * Evolução orgânica pós-partida guiada pelo ciclo de carreira (faixa etária + potencial + posição).
+ * Funciona para qualquer atleta abaixo do teto (sem depender de flag isolada `ehJovem`),
+ * preservando a evolução +1 dos jovens da base dentro do potencial individual.
  */
 export function aplicarEvolucaoPosPartidaJogador(jogador, rng = Math.random) {
   garantirDesenvolvimentoJogador(jogador);
 
+  const faixa = obterFaixaCarreira(jogador.idade);
+  const potencial = jogador.potencial;
+  const atual = calcularAvaliacaoPosicional(jogador);
+  if (atual >= potencial) {
+    return null;
+  }
+
   const posChave = normalizarChavePosicao(jogador);
   const pesos = PESOS_AVALIACAO_POSICIONAL[posChave] || PESOS_AVALIACAO_POSICIONAL.MEI;
   const candidatos = Object.keys(pesos).filter((attr) => {
+    if ((faixa.id === 'auge' || faixa.id === 'veterano') && attr === 'velocidade') {
+      return false;
+    }
     const teto = calcularTetoAtributoJogador(jogador, attr);
     return (jogador.atributos?.[attr] ?? 45) < teto;
   });
 
   if (candidatos.length === 0) {
-    // Fallback para manter compatibilidade com jovens da base caso algum atributo secundário ainda tenha espaço
     const todos = jogador.ehGoleiro
       ? ['defesa', 'posicionamento', 'passe', 'dominio', 'concentracao']
       : [
@@ -311,12 +329,12 @@ export function aplicarEvolucaoPosPartidaJogador(jogador, rng = Math.random) {
           'concentracao',
         ];
     const comEspaco = todos.filter(
-      (a) => (jogador.atributos?.[a] ?? 45) < Math.min(95, jogador.potencial + 8),
+      (a) => (jogador.atributos?.[a] ?? 45) < calcularTetoAtributoJogador(jogador, a),
     );
     if (comEspaco.length === 0) return null;
     const escolhido = comEspaco[Math.floor(rng() * comEspaco.length)];
     const res = aplicarEvolucaoAtributo(jogador, escolhido, 1, 'partida');
-    return { atributo: escolhido, ...res };
+    return res.delta > 0 ? { atributo: escolhido, ...res } : null;
   }
 
   // Sorteio ponderado pela relevância posicional
@@ -331,8 +349,17 @@ export function aplicarEvolucaoPosPartidaJogador(jogador, rng = Math.random) {
     }
   }
 
+  // Verifica que +1 não empurra a avaliação funcional acima do potencial
+  const backup = jogador.atributos[escolhido];
+  jogador.atributos[escolhido] = backup + 1;
+  const novaAval = calcularAvaliacaoPosicional(jogador);
+  jogador.atributos[escolhido] = backup;
+  if (novaAval > potencial) {
+    return null;
+  }
+
   const res = aplicarEvolucaoAtributo(jogador, escolhido, 1, 'partida');
-  return { atributo: escolhido, ...res };
+  return res.delta > 0 ? { atributo: escolhido, ...res } : null;
 }
 
 /**
@@ -353,8 +380,25 @@ export function classificarPotencialOlheiro(jogador) {
   const atual = calcularAvaliacaoPosicional(jogador);
   const pot = jogador.potencial;
   const gap = Math.max(0, Math.round(pot - atual));
+  const faixaCarreira = obterFaixaCarreira(jogador.idade);
 
-  // Jogador já veterano perto do limite recebe leitura honesta de teto atingido
+  // Veteranos ou atletas consolidados no auge perto do limite recebem leitura honesta
+  if (
+    (faixaCarreira.id === 'veterano' ||
+      faixaCarreira.id === 'declinio' ||
+      faixaCarreira.id === 'fim_carreira') &&
+    gap <= 4
+  ) {
+    return {
+      id: 'veterano_consolidado',
+      rotulo:
+        faixaCarreira.id === 'fim_carreira'
+          ? 'Experiência de vestiário'
+          : 'Veterano consolidado',
+      margemTexto: 'Entrega leitura de jogo e experiência, sem margem física de salto',
+    };
+  }
+
   if (jogador.idade >= 28 && gap <= 4) {
     return {
       id: 'consolidado',

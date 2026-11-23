@@ -361,8 +361,12 @@ export function deduzirConcentracaoPadrao(jogador) {
 }
 
 export function deduzirIdadePadrao(jogador) {
-  if (typeof jogador?.idade === 'number' && Number.isFinite(jogador.idade)) {
-    return Math.max(16, Math.min(40, Math.round(jogador.idade)));
+  if (
+    typeof jogador?.idade === 'number' &&
+    Number.isFinite(jogador.idade) &&
+    jogador.idade > 0
+  ) {
+    return Math.max(16, Math.min(45, Math.round(jogador.idade)));
   }
   if (jogador?.ehJovem) return 18;
   const h = hashTextoDeterministico(`idade|${jogador?.id || ''}|${jogador?.nome || ''}`);
