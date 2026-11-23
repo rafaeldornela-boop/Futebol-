@@ -5,7 +5,7 @@ Jogo de futebol de técnico por turnos em **HTML, CSS e JavaScript puros** (sem 
 ## Estrutura do Projeto
 
 ```text
-├── index.html              # Tela inicial, placar, campo vertical em 17 zonas, defesa e modais
+├── index.html              # Tela inicial, placar, campo vertical em 17 zonas, controles e modais
 ├── css/
 │   └── style.css           # Estilo do campo vertical 3×5 + GK/GKR, pressão e responsividade
 ├── js/
@@ -48,22 +48,39 @@ Jogo de futebol de técnico por turnos em **HTML, CSS e JavaScript puros** (sem 
 │       ├── relogio.js      # Cronômetro visual de turno com pausa automática em modais e depuração
 │       ├── telas.js        # Escalação, Treino, Mercado (incl. Base), Patrocínio, Eventos e Fim de Campanha
 │       └── trofeus.js      # Sala de Troféus e painel das 5 Conquistas
+├── app/                    # Invólucro Next.js para servir index.html, /js/* e /css/*
+├── tests/
+│   └── regras.test.mjs     # Suite de regras, campanha, meta e equilíbrio
 └── README.md               # Documentação do projeto
 ```
 
 ## Como Rodar
 
-Como o jogo utiliza módulos ES nativos do navegador (`<script type="module">`), sirva a pasta do projeto com um servidor HTTP local:
+O jogo em si é **HTML, CSS e JavaScript puros** (módulos ES no navegador). Há dois caminhos suportados:
+
+### 1. Next.js (recomendado para desenvolvimento e deploy)
 
 ```bash
-# Opção 1: Python 3
-python3 -m http.server 8000
-
-# Opção 2: Node.js
-npx serve .
+npm install
+npm run dev      # http://localhost:3000
+npm run build    # build de produção
+npm start        # serve o build
+npm test         # suite de regras (Node)
 ```
 
-Em seguida, abra `http://localhost:8000` no navegador.
+O App Router serve `index.html` na raiz e expõe `/js/*` e `/css/*` com validação de caminho.
+
+### 2. Servidor estático (sem instalar o Next)
+
+```bash
+# Python 3
+python3 -m http.server 8000
+
+# ou via npm (após npm install)
+npm run serve:static
+```
+
+Abra `http://localhost:8000` no navegador. **Não** abra o `index.html` via `file://` — módulos ES precisam de HTTP.
 
 ## Meta-Progressão (Entre Campanhas)
 
@@ -98,7 +115,6 @@ Todo efeito permanente entre campanhas passa exclusivamente por `modificadoresMe
   - `Ofensiva`: nas fases `MEIO` e `FRENTE`, jogadores de linha (exceto `ZAG1`) sobem 1 faixa (até 5), passes para frente e longo ganham `+4%`, deslocamento custa `×1,5` e o contra-ataque adversário recebe `+10%` extra (`20%`).
   - `Defensiva`: nas fases `MEIO` e `FRENTE`, jogadores de linha (exceto atacantes centrais) recuam 1 faixa (até 1), passe para frente perde `−4%`, pressão na linha é `×1,10` e o próprio contra-ataque ganha `+5%` (`15%`).
   - O rival ajusta dinamicamente sua postura nos últimos 3 turnos conforme o placar.
-- **Relógio de Decisão (`relogio.js`)**: desligado no nível 0; `30s` (níveis 1–2), `20s` (níveis 3–4) e `12s` (nível 5) — opcionalmente desativável no menu Opções ou no menu de pausa. Na segunda metade do tempo, a chance cai `−1%` por segundo até `−10%`. Se o tempo acabar no ataque, o rival rouba a bola; na defesa, aplica `Manter marcação`. O relógio pausa automaticamente em modais e ao inspecionar o painel `Detalhes do cálculo`.
 - **Estamina e Fadiga (`estamina.js`)**: jogadores começam com 100 (sem recuperação na partida). A fadiga multiplica **todos** os atributos usados nos cálculos (`70–100: ×1,00 | 40–69: ×0,92 | 20–39: ×0,82 | <20: ×0,70`).
   - **Custo das jogadas**: passe curto/trás/lateral (`2`/`1`), frente (`3`/`2`), longo/invertido (`5`/`3`), conduzir (`6`), finalizar (`6`) e deslocamento de zona-base no turno (`1` por faixa mudada).
 - **Pressão Dupla (0–100)**:
