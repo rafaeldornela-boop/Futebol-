@@ -22,6 +22,16 @@ function criarJogador({
   habilidades = [],
   atributos,
 }) {
+  const dibrePadrao = ehGoleiro
+    ? Math.max(20, Math.round((atributos.tecnica || 50) * 0.55))
+    : ['PE', 'PD'].includes(posicao)
+      ? Math.min(98, (atributos.tecnica || 80) + 4)
+      : ['ME', 'MD'].includes(posicao)
+        ? Math.min(96, (atributos.tecnica || 80) + 2)
+        : ['ZAG'].includes(posicao)
+          ? Math.max(35, (atributos.tecnica || 62) - 6)
+          : atributos.tecnica || 70;
+
   return {
     id,
     nome,
@@ -42,6 +52,7 @@ function criarJogador({
       desarme: atributos.desarme,
       velocidade: atributos.velocidade,
       tecnica: atributos.tecnica,
+      dibre: atributos.dibre ?? dibrePadrao,
       finalizacao: atributos.finalizacao,
       agressividade: atributos.agressividade,
       ...(ehGoleiro ? { defesa: atributos.defesa } : {}),

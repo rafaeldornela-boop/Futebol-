@@ -51,7 +51,8 @@ function formatarResumoAttrs(jogador) {
   if (jogador.ehGoleiro) {
     return `DEF\u00A0${a.defesa} · POS\u00A0${a.posicionamento} · PAS\u00A0${a.passe} · DOM\u00A0${a.dominio}`;
   }
-  return `PAS\u00A0${a.passe} · DOM\u00A0${a.dominio} · MAR\u00A0${a.marcacao} · DES\u00A0${a.desarme} · VEL\u00A0${a.velocidade} · FIN\u00A0${a.finalizacao}`;
+  const dib = a.dibre ?? a.tecnica;
+  return `PAS\u00A0${a.passe} · DOM\u00A0${a.dominio} · DIB\u00A0${dib} · MAR\u00A0${a.marcacao} · DES\u00A0${a.desarme} · VEL\u00A0${a.velocidade} · FIN\u00A0${a.finalizacao}`;
 }
 
 function criarBarraEstaminaElenco(jogador) {

@@ -23,6 +23,7 @@ export const ATRIBUTOS_LINHA = Object.freeze([
   'desarme',
   'velocidade',
   'tecnica',
+  'dibre',
   'finalizacao',
 ]);
 
@@ -35,6 +36,7 @@ export const ROTULOS_ATRIBUTOS = Object.freeze({
   desarme: 'Desarme',
   velocidade: 'Velocidade',
   tecnica: 'Técnica',
+  dibre: 'Dibre',
   finalizacao: 'Finalização',
   agressividade: 'Agressividade',
   defesa: 'Defesa',
@@ -274,6 +276,7 @@ export function gerarRivalPorCamada({
         ehLateral || papel?.startsWith('PONTA') ? 5 : 0,
       ),
       tecnica: sortearAttr(ehMeia || ehAta ? 3 : -2),
+      dibre: sortearAttr(ehAta || ehMeia ? 4 : ehLateral ? 2 : -4),
       finalizacao: sortearAttr(ehAta ? 5 : ehZagueiro ? -15 : -4),
       agressividade: sortearAttr(-8),
       ...(ehGoleiro ? { defesa: sortearAttr(6) } : {}),

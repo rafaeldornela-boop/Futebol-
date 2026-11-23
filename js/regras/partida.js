@@ -14,11 +14,16 @@ import {
 } from '../dados/formacoes.js';
 import { clonarTimesPadrao } from '../dados/times.js';
 import {
+  converterDoPontoDeVista,
+  ehZonaAreaPenal,
+  ehZonaLinhaDeFundo,
+  ehZonaTercoFinal,
   obterCorredor,
   obterDistanciaZonas,
   obterFaixa,
   obterZonaGolAlvo,
   obterZonaProprioGoleiro,
+  podeCruzarNaZona,
   podeFinalizarNaZona,
   saoZonasVizinhos,
   ZONAS,
@@ -26,11 +31,16 @@ import {
 } from '../dados/zonas.js';
 import {
   calcularChanceConducao,
+  calcularChanceCruzamento,
+  calcularChanceDibre,
   calcularChanceFinalizacao,
   calcularChancePasse,
   calcularMapaPressao,
   classificarTipoPasse,
+  CRUZAMENTO_CONFIG,
   DEFESA_CONFIG,
+  DIBRE_CONFIG,
+  FINALIZACAO_CONFIG,
   MARGEM_ERRO_EXECUCAO,
 } from './calculo.js';
 import {
@@ -67,7 +77,7 @@ import {
   POSTURA_PADRAO,
 } from './postura.js';
 
-export const TURNOS_POR_LADO = 10;
+export const TURNOS_POR_LADO = 16;
 
 export function obterAdversario(idTime) {
   return idTime === 'meuTime' ? 'rival' : 'meuTime';
@@ -204,18 +214,49 @@ export function criarPartida(timesPersonalizados = null, opcoes = {}) {
     bonusContraAtaqueMeu: false,
     bonusContraAtaqueRival: false,
     bonusProximaJogadaRival: 0,
+    impeto: {
+      meuTime: 0,
+      rival: 0,
+    },
+    bonusDibre: {
+      meuTime: false,
+      rival: false,
+    },
+    bonusCruzamento: {
+      meuTime: false,
+      rival: false,
+    },
+    bonusRebote: {
+      meuTime: false,
+      rival: false,
+    },
+    bolaParadaContexto: null,
     defesaTurno: null,
     defesaRivalTurno: null,
     ultimoCalculo: null,
     ultimaJogada: {
       tipo: 'inicio',
       time: 'meuTime',
-      texto: `Apita o árbitro! ${zagueiroInicial.nomeCurto} (${zagueiroInicial.posicao}) inicia com a bola em Z1-C. Toque nele para passar ou conduzir.`,
+      texto: `Apita o árbitro! ${zagueiroInicial.nomeCurto} (${zagueiroInicial.posicao}) inicia com a bola em Z1-C. Toque nele para passar, conduzir ou dibrar.`,
     },
     historico: [],
     estatisticas: {
-      meuTime: { passesCertos: 0, passesTentados: 0, finalizacoes: 0, interceptacoes: 0 },
-      rival: { passesCertos: 0, passesTentados: 0, finalizacoes: 0, interceptacoes: 0 },
+      meuTime: {
+        passesCertos: 0,
+        passesTentados: 0,
+        finalizacoes: 0,
+        interceptacoes: 0,
+        dibresCertos: 0,
+        cruzamentos: 0,
+      },
+      rival: {
+        passesCertos: 0,
+        passesTentados: 0,
+        finalizacoes: 0,
+        interceptacoes: 0,
+        dibresCertos: 0,
+        cruzamentos: 0,
+      },
     },
     extensoes: {
       marcacaoIndividual: {
@@ -282,7 +323,10 @@ export function avaliarPasse(estado, receptorId, { habilidadeId = null } = {}) {
   }
 
   const mapaPressao = obterPressaoDefensiva(estado, idDefensor);
-  const ajustesChance = obterAjustesChanceTurno(estado, idAtacante, 'passe', tipo.id);
+  const ajustesChance = obterAjustesChanceTurno(estado, idAtacante, 'passe', tipo.id, {
+    zonaOrigem: passador.zona,
+    zonaDestino: receptor.zona,
+  });
 
   const calculo = calcularChancePasse({
     passador,
@@ -350,7 +394,10 @@ export function avaliarConducao(estado, zonaDestino, { habilidadeId = null } = {
   }
 
   const mapaPressao = obterPressaoDefensiva(estado, idDefensor);
-  const ajustesChance = obterAjustesChanceTurno(estado, idAtacante, 'conduzir');
+  const ajustesChance = obterAjustesChanceTurno(estado, idAtacante, 'conduzir', null, {
+    zonaOrigem: portador.zona,
+    zonaDestino,
+  });
 
   const calculo = calcularChanceConducao({
     portador,
@@ -387,9 +434,174 @@ export function avaliarConducao(estado, zonaDestino, { habilidadeId = null } = {
 }
 
 /**
- * Prévia de finalização na faixa 5, Z4-C ou faixas 3-4 via Chute de fora.
+ * Prévia de Dibre do portador (na própria zona para limpar a marcação ou avançando para zona vizinha).
  */
-export function avaliarFinalizacao(estado, { habilidadeId = null } = {}) {
+export function avaliarDibre(estado, zonaDestino = null) {
+  const idAtacante = estado.timeComBola;
+  const idDefensor = obterAdversario(idAtacante);
+  const timeAtacante = estado.times[idAtacante];
+  const timeDefensor = estado.times[idDefensor];
+
+  const portador = encontrarJogador(timeAtacante, estado.portadorId);
+  if (!portador || !portador.zona || ZONAS[portador.zona]?.foraDaGrade) {
+    return null;
+  }
+
+  let destinoEscolhido = zonaDestino;
+  if (!destinoEscolhido) {
+    const zonaCentroArea = converterDoPontoDeVista('Z5-C', idAtacante);
+    if (portador.zona === zonaCentroArea) {
+      destinoEscolhido = portador.zona;
+    } else {
+      const candidatos = (ZONAS[portador.zona]?.vizinhos || []).filter(
+        (z) => !ZONAS[z]?.foraDaGrade,
+      );
+      candidatos.sort((a, b) => {
+        const distA = obterDistanciaZonas(a, zonaCentroArea);
+        const distB = obterDistanciaZonas(b, zonaCentroArea);
+        if (distA !== distB) return distA - distB;
+        return obterFaixa(b, idAtacante) - obterFaixa(a, idAtacante);
+      });
+      destinoEscolhido = candidatos[0] || portador.zona;
+    }
+  }
+
+  if (!ZONAS[destinoEscolhido] || ZONAS[destinoEscolhido].foraDaGrade) {
+    return null;
+  }
+  if (
+    destinoEscolhido !== portador.zona &&
+    !saoZonasVizinhos(portador.zona, destinoEscolhido)
+  ) {
+    return null;
+  }
+
+  const mapaPressao = obterPressaoDefensiva(estado, idDefensor);
+  const ajustesChance = obterAjustesChanceTurno(estado, idAtacante, 'dibrar', null, {
+    zonaOrigem: portador.zona,
+    zonaDestino: destinoEscolhido,
+  });
+
+  const calculo = calcularChanceDibre({
+    portador,
+    zonaDestino: destinoEscolhido,
+    defensores: timeDefensor.jogadores,
+    timeId: idAtacante,
+    aliados: timeAtacante.jogadores,
+    mapaPressao,
+    ajustesChance,
+  });
+
+  if (!calculo) return null;
+
+  return {
+    acao: 'dibrar',
+    passador: portador,
+    receptor: null,
+    zonaOrigem: portador.zona,
+    zonaDestino: destinoEscolhido,
+    habilidadeAtiva: null,
+    calculo,
+  };
+}
+
+/**
+ * Prévia de Cruzamento da Linha de Fundo (Z5-E/Z5-D) ou Ala Ofensiva (Z4-E/Z4-D)
+ * para cabeceio/voleio imediato de um companheiro posicionado na área (faixa 5 ou Z4-C).
+ */
+export function avaliarCruzamento(estado, receptorId = null) {
+  const idAtacante = estado.timeComBola;
+  const idDefensor = obterAdversario(idAtacante);
+  const timeAtacante = estado.times[idAtacante];
+  const timeDefensor = estado.times[idDefensor];
+
+  const passador = encontrarJogador(timeAtacante, estado.portadorId);
+  if (!passador || !podeCruzarNaZona(passador.zona, idAtacante)) {
+    return null;
+  }
+
+  let receptor = receptorId ? encontrarJogador(timeAtacante, receptorId) : null;
+  if (!receptor) {
+    const alvosArea = timeAtacante.jogadores.filter(
+      (j) =>
+        j.id !== passador.id &&
+        !j.ehGoleiro &&
+        !j.extras?.cartoes?.vermelho &&
+        j.zona &&
+        ehZonaTercoFinal(j.zona, idAtacante),
+    );
+    if (alvosArea.length === 0) return null;
+    alvosArea.sort((a, b) => {
+      const aZ5C = zonaParaPontoDeVista(a.zona, idAtacante) === 'Z5-C' ? 1 : 0;
+      const bZ5C = zonaParaPontoDeVista(b.zona, idAtacante) === 'Z5-C' ? 1 : 0;
+      if (aZ5C !== bZ5C) return bZ5C - aZ5C;
+      const faixaA = obterFaixa(a.zona, idAtacante);
+      const faixaB = obterFaixa(b.zona, idAtacante);
+      if (faixaA !== faixaB) return faixaB - faixaA;
+      const scoreA =
+        obterAtributoEfetivo(a, 'finalizacao') +
+        obterAtributoEfetivo(a, 'posicionamento');
+      const scoreB =
+        obterAtributoEfetivo(b, 'finalizacao') +
+        obterAtributoEfetivo(b, 'posicionamento');
+      return scoreB - scoreA;
+    });
+    receptor = alvosArea[0];
+  }
+
+  if (
+    !receptor ||
+    receptor.id === passador.id ||
+    receptor.extras?.cartoes?.vermelho ||
+    !receptor.zona ||
+    !ehZonaTercoFinal(receptor.zona, idAtacante)
+  ) {
+    return null;
+  }
+
+  const goleiro = encontrarGoleiro(timeDefensor);
+  const mapaPressao = obterPressaoDefensiva(estado, idDefensor);
+  const ajustesChance = obterAjustesChanceTurno(estado, idAtacante, 'cruzar', null, {
+    zonaOrigem: passador.zona,
+    zonaDestino: receptor.zona,
+  });
+  const { bonusDefesa: bonusDefesaGoleiro, habilidades: habilidadesDefesaExtra } =
+    obterBonusDefesaGoleiroTurno(estado, idDefensor);
+
+  const calculo = calcularChanceCruzamento({
+    passador,
+    receptor,
+    goleiro,
+    defensores: timeDefensor.jogadores,
+    timeId: idAtacante,
+    aliados: timeAtacante.jogadores,
+    mapaPressao,
+    ajustesChance,
+    bonusDefesaGoleiro,
+    habilidadesDefesaExtra,
+  });
+
+  if (!calculo) return null;
+
+  return {
+    acao: 'cruzar',
+    passador,
+    receptor,
+    zonaOrigem: passador.zona,
+    zonaDestino: receptor.zona,
+    habilidadeAtiva: null,
+    calculo,
+  };
+}
+
+/**
+ * Prévia de finalização na faixa 5, Z4-C, faixas 3-4 via Chute de fora,
+ * ou em Bola Parada Ofensiva (Pênalti ou Falta Direta).
+ */
+export function avaliarFinalizacao(
+  estado,
+  { habilidadeId = null, modoBolaParada = null, tipoChute = 'padrao' } = {},
+) {
   const idAtacante = estado.timeComBola;
   const idDefensor = obterAdversario(idAtacante);
   const timeAtacante = estado.times[idAtacante];
@@ -397,6 +609,20 @@ export function avaliarFinalizacao(estado, { habilidadeId = null } = {}) {
 
   const atacante = encontrarJogador(timeAtacante, estado.portadorId);
   if (!atacante) return null;
+
+  const bp = estado.bolaParadaContexto;
+  const bpAtivaTime = bp && bp.time === idAtacante ? bp.tipo : null;
+  let modoEfetivo = modoBolaParada;
+  if (!modoEfetivo && !habilidadeId) {
+    if (bpAtivaTime === 'penalti') {
+      modoEfetivo = 'penalti';
+    } else if (
+      bpAtivaTime === 'falta_ofensiva' &&
+      obterFaixa(atacante.zona, idAtacante) >= 3
+    ) {
+      modoEfetivo = 'falta_direta';
+    }
+  }
 
   let infoHab = null;
   if (habilidadeId) {
@@ -406,7 +632,11 @@ export function avaliarFinalizacao(estado, { habilidadeId = null } = {}) {
     const faixa = obterFaixa(atacante.zona, idAtacante);
     const permitidas = infoHab.habilidade.efeito.faixasPermitidas || [3, 4];
     if (!permitidas.includes(faixa)) return null;
-  } else if (!podeFinalizarNaZona(atacante.zona, idAtacante)) {
+  } else if (
+    modoEfetivo !== 'penalti' &&
+    modoEfetivo !== 'falta_direta' &&
+    !podeFinalizarNaZona(atacante.zona, idAtacante)
+  ) {
     return null;
   }
 
@@ -427,6 +657,8 @@ export function avaliarFinalizacao(estado, { habilidadeId = null } = {}) {
     habilidadeAtiva: infoHab?.habilidade || null,
     bonusDefesaGoleiro,
     habilidadesDefesaExtra,
+    modoBolaParada: modoEfetivo,
+    tipoChute,
   });
 
   if (!calculo) return null;
@@ -437,6 +669,8 @@ export function avaliarFinalizacao(estado, { habilidadeId = null } = {}) {
     receptor: goleiro,
     zonaOrigem: atacante.zona,
     zonaDestino: obterZonaGolAlvo(idAtacante),
+    modoBolaParada: modoEfetivo,
+    tipoChute,
     habilidadeAtiva: infoHab
       ? {
           id: infoHab.habilidade.id,
@@ -460,10 +694,20 @@ export function listarOpcoesLegais(estado) {
   const portador = obterPortador(estado);
   if (!portador) return [];
 
-  const timeAtacante = estado.times[estado.timeComBola];
-  const golAlvo = obterZonaGolAlvo(estado.timeComBola);
-  const proprioGol = obterZonaProprioGoleiro(estado.timeComBola);
+  const idAtacante = estado.timeComBola;
+  const timeAtacante = estado.times[idAtacante];
+  const golAlvo = obterZonaGolAlvo(idAtacante);
+  const proprioGol = obterZonaProprioGoleiro(idAtacante);
   const opcoes = [];
+
+  // Se for cobrança de pênalti, a opção principal é a cobrança direta
+  if (
+    estado.bolaParadaContexto?.time === idAtacante &&
+    estado.bolaParadaContexto?.tipo === 'penalti'
+  ) {
+    const penalti = avaliarFinalizacao(estado, { modoBolaParada: 'penalti' });
+    if (penalti) return [penalti];
+  }
 
   for (const companheiro of timeAtacante.jogadores) {
     if (companheiro.id === portador.id || companheiro.extras?.cartoes?.vermelho) continue;
@@ -475,6 +719,36 @@ export function listarOpcoesLegais(estado) {
     if (zonaVizinha === golAlvo || zonaVizinha === proprioGol) continue;
     const previa = avaliarConducao(estado, zonaVizinha);
     if (previa) opcoes.push(previa);
+  }
+
+  // Opções de Dibre no meio/ataque
+  const faixaPortador = obterFaixa(portador.zona, idAtacante);
+  if (faixaPortador >= 3 && !portador.ehGoleiro) {
+    const dibreLocal = avaliarDibre(estado, portador.zona);
+    if (dibreLocal) opcoes.push(dibreLocal);
+    for (const zonaVizinha of ZONAS[portador.zona]?.vizinhos || []) {
+      if (zonaVizinha === golAlvo || zonaVizinha === proprioGol) continue;
+      if (obterFaixa(zonaVizinha, idAtacante) >= faixaPortador) {
+        const prevDibre = avaliarDibre(estado, zonaVizinha);
+        if (prevDibre) opcoes.push(prevDibre);
+      }
+    }
+  }
+
+  // Opções de Cruzamento da Linha de Fundo / Ala Ofensiva
+  if (podeCruzarNaZona(portador.zona, idAtacante)) {
+    for (const companheiro of timeAtacante.jogadores) {
+      if (
+        companheiro.id === portador.id ||
+        companheiro.ehGoleiro ||
+        companheiro.extras?.cartoes?.vermelho ||
+        !ehZonaTercoFinal(companheiro.zona, idAtacante)
+      ) {
+        continue;
+      }
+      const prevCruz = avaliarCruzamento(estado, companheiro.id);
+      if (prevCruz) opcoes.push(prevCruz);
+    }
   }
 
   const chute = avaliarFinalizacao(estado);
@@ -532,8 +806,18 @@ export function reavaliarPrevia(estado, previa) {
   if (previa.acao === 'conduzir') {
     return avaliarConducao(estado, previa.zonaDestino, { habilidadeId });
   }
+  if (previa.acao === 'dibrar') {
+    return avaliarDibre(estado, previa.zonaDestino);
+  }
+  if (previa.acao === 'cruzar') {
+    return avaliarCruzamento(estado, previa.receptor?.id);
+  }
   if (previa.acao === 'finalizar') {
-    return avaliarFinalizacao(estado, { habilidadeId });
+    return avaliarFinalizacao(estado, {
+      habilidadeId,
+      modoBolaParada: previa.modoBolaParada || null,
+      tipoChute: previa.tipoChute || 'padrao',
+    });
   }
   return null;
 }
@@ -654,6 +938,20 @@ export function tentarAtivarHabilidadeDefensivaRival(
   return null;
 }
 
+function ganharImpeto(estado, timeId, delta = 1) {
+  if (!estado.impeto) estado.impeto = { meuTime: 0, rival: 0 };
+  const max = DEFESA_CONFIG.maxNivelImpeto || 3;
+  estado.impeto[timeId] = Math.max(
+    0,
+    Math.min(max, (estado.impeto[timeId] || 0) + delta),
+  );
+}
+
+function zerarImpeto(estado, timeId) {
+  if (!estado.impeto) estado.impeto = { meuTime: 0, rival: 0 };
+  estado.impeto[timeId] = 0;
+}
+
 function concluirTurno(
   estado,
   proximoTime,
@@ -689,6 +987,7 @@ function concluirTurno(
     estado.timeComBola = proximoTime;
     estado.zonaBola = novaZonaBola;
     estado.portadorId = proximoPortadorId;
+    estado.bolaParadaContexto = null;
     sincronizarPosicoesTurno(estado, { cobrarDeslocamento: false });
     return;
   }
@@ -702,6 +1001,11 @@ function concluirTurno(
     zonaEscolhida = timeEscolhido === 'meuTime' ? 'Z1-C' : 'Z5-C';
     const saida = encontrarJogadorSaida(estado.times[timeEscolhido]);
     portadorEscolhido = saida.id;
+    estado.bolaParadaContexto = null;
+  }
+
+  if (estado.bolaParadaContexto && estado.bolaParadaContexto.time !== timeEscolhido) {
+    estado.bolaParadaContexto = null;
   }
 
   estado.timeComBola = timeEscolhido;
@@ -767,7 +1071,9 @@ export function anunciarIntencaoRival(estado, intencaoInicial) {
  */
 function mesmaJogada(a, b) {
   if (!a || !b || a.acao !== b.acao) return false;
-  if (a.acao === 'passe') return a.receptor?.id === b.receptor?.id;
+  if (a.acao === 'passe' || a.acao === 'cruzar') {
+    return a.receptor?.id === b.receptor?.id;
+  }
   return a.zonaDestino === b.zonaDestino;
 }
 
@@ -1104,6 +1410,11 @@ export function aplicarEstourouRelogioAtaque(estado) {
   const descontoAplicado = estado.descontoRelogioAtual || 0;
 
   estado.bonusContraAtaqueMeu = false;
+  if (estado.bonusDibre) estado.bonusDibre.meuTime = false;
+  if (estado.bonusCruzamento) estado.bonusCruzamento.meuTime = false;
+  estado.bolaParadaContexto = null;
+  zerarImpeto(estado, 'meuTime');
+  ganharImpeto(estado, 'rival', 1);
   estado.descontoRelogioAtual = 0;
   estado.turnosJogados.meuTime += 1;
 
@@ -1177,7 +1488,7 @@ export function aplicarEstourouRelogioAtaque(estado) {
 }
 
 /**
- * Executa uma jogada previamente avaliada (`passe`, `conduzir` ou `finalizar`).
+ * Executa uma jogada previamente avaliada (`passe`, `conduzir`, `dibrar`, `cruzar` ou `finalizar`).
  */
 export function executarJogada(
   estado,
@@ -1197,10 +1508,10 @@ export function executarJogada(
   const timeAtacante = estado.times[idAtacante];
   const timeDefensor = estado.times[idDefensor];
 
-  // Em finalização do meu time, o goleiro rival pode ativar Voo (25%) antes da resolução
+  // Em finalização ou cruzamento do meu time, o goleiro rival pode ativar Voo (25%) antes da resolução
   let previaEfetiva = previa;
   let vooRivalAtivado = null;
-  if (idAtacante === 'meuTime' && previa.acao === 'finalizar') {
+  if (idAtacante === 'meuTime' && (previa.acao === 'finalizar' || previa.acao === 'cruzar')) {
     vooRivalAtivado = tentarAtivarHabilidadeDefensivaRival(
       estado,
       'finalizacao_meu',
@@ -1232,6 +1543,18 @@ export function executarJogada(
     estado.bonusContraAtaqueRival = false;
     estado.bonusProximaJogadaRival = 0;
   }
+  if (estado.bonusDibre) {
+    estado.bonusDibre[idAtacante] = false;
+  }
+  if (estado.bonusCruzamento) {
+    estado.bonusCruzamento[idAtacante] = false;
+  }
+  if (estado.bonusRebote) {
+    estado.bonusRebote[idAtacante] = false;
+  }
+  if (estado.bolaParadaContexto?.time === idAtacante) {
+    estado.bolaParadaContexto = null;
+  }
 
   // Consome uso da habilidade ativa ofensiva (mesmo em caso de erro)
   if (habilidadeAtiva) {
@@ -1262,17 +1585,42 @@ export function executarJogada(
 
     if (sorteio <= chance) {
       estado.estatisticas[idAtacante].passesCertos += 1;
+      const tipoId = calculo.tipo?.id || 'curto';
+      const foiDaLinhaDeFundo =
+        ehZonaLinhaDeFundo(previaEfetiva.zonaOrigem, idAtacante) &&
+        ehZonaTercoFinal(receptor.zona, idAtacante);
+
+      if (foiDaLinhaDeFundo && estado.bonusCruzamento) {
+        estado.bonusCruzamento[idAtacante] = true;
+      }
+
+      if (
+        tipoId === 'frente' ||
+        tipoId === 'longo' ||
+        tipoId === 'invertido' ||
+        ehZonaTercoFinal(receptor.zona, idAtacante)
+      ) {
+        ganharImpeto(estado, idAtacante, 1);
+      }
+
+      const notaLinhaDeFundo = foiDaLinhaDeFundo
+        ? ' Passe da linha de fundo (+15% para finalizar de primeira)!'
+        : '';
+
       resultado = {
         tipo: 'acerto',
         acao,
         time: idAtacante,
         sorteio,
         chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: receptor.zona,
         desfecho: 'Acerto',
-        texto: `${prefixoHab}${passador.nomeCurto} acertou passe ${calculo.tipo.rotulo.toLowerCase()} para ${receptor.nomeCurto} em ${receptor.zona} (${chance}%, sorteio ${sorteio}).`,
+        texto: `${prefixoHab}${passador.nomeCurto} acertou passe ${calculo.tipo.rotulo.toLowerCase()} para ${receptor.nomeCurto} em ${receptor.zona} (${chance}%, sorteio ${sorteio}).${notaLinhaDeFundo}`,
       };
       concluirTurno(estado, idAtacante, receptor.zona, receptor.id, rngHabilidade);
     } else if (sorteio <= limiteErroExecucao) {
+      zerarImpeto(estado, idAtacante);
       const saida = descreverSaidaDeBola(zonaDestino, idAtacante);
       const zonaReinicio = obterZonaReinicioRival(zonaDestino, saida.tipo, idDefensor);
       const cobradorRival =
@@ -1281,18 +1629,29 @@ export function executarJogada(
           : encontrarJogadorNaOuPertoDaZona(timeDefensor, zonaReinicio, {
               ignorarGoleiro: true,
             });
+      if (saida.tipo === 'escanteio') {
+        estado.bolaParadaContexto = {
+          tipo: 'escanteio',
+          time: idDefensor,
+          zona: zonaReinicio,
+        };
+      }
       resultado = {
         tipo: saida.tipo,
         acao,
         time: idAtacante,
         sorteio,
         chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
         desfecho: `Erro de execução (${saida.rotulo})`,
         texto: `${prefixoHab}Erro de execução! Passe de ${passador.nomeCurto} saiu em ${saida.rotulo} na zona ${zonaDestino} (chance ${chance}%, sorteio ${sorteio}). Posse com ${timeDefensor.nome}.`,
       };
       concluirTurno(estado, idDefensor, zonaReinicio, cobradorRival.id, rngHabilidade);
     } else {
       estado.estatisticas[idDefensor].interceptacoes += 1;
+      zerarImpeto(estado, idAtacante);
+      ganharImpeto(estado, idDefensor, 1);
       const interceptador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
       ativouContraAtaque = verificarAtivacaoContraAtaque(
         estadoSnapshotAntes,
@@ -1309,6 +1668,8 @@ export function executarJogada(
         time: idAtacante,
         sorteio,
         chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
         desfecho: 'Interceptação',
         texto: `${prefixoHab}${interceptador.nomeCurto} interceptou o passe de ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado na próxima jogada!' : ''}`,
       };
@@ -1316,17 +1677,23 @@ export function executarJogada(
     }
   } else if (acao === 'conduzir') {
     if (sorteio <= chance) {
+      if ((calculo.deltaFaixa ?? 0) > 0 || ehZonaTercoFinal(zonaDestino, idAtacante)) {
+        ganharImpeto(estado, idAtacante, 1);
+      }
       resultado = {
         tipo: 'conducao',
         acao,
         time: idAtacante,
         sorteio,
         chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
         desfecho: 'Acerto',
         texto: `${prefixoHab}${passador.nomeCurto} conduziu a bola até ${zonaDestino} (${chance}%, sorteio ${sorteio}).`,
       };
       concluirTurno(estado, idAtacante, zonaDestino, passador.id, rngHabilidade);
     } else if (sorteio <= limiteErroExecucao) {
+      zerarImpeto(estado, idAtacante);
       const saida = descreverSaidaDeBola(zonaDestino, idAtacante);
       const zonaReinicio = obterZonaReinicioRival(zonaDestino, saida.tipo, idDefensor);
       const cobradorRival =
@@ -1335,18 +1702,29 @@ export function executarJogada(
           : encontrarJogadorNaOuPertoDaZona(timeDefensor, zonaReinicio, {
               ignorarGoleiro: true,
             });
+      if (saida.tipo === 'escanteio') {
+        estado.bolaParadaContexto = {
+          tipo: 'escanteio',
+          time: idDefensor,
+          zona: zonaReinicio,
+        };
+      }
       resultado = {
         tipo: saida.tipo,
         acao,
         time: idAtacante,
         sorteio,
         chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
         desfecho: `Erro de execução (${saida.rotulo})`,
         texto: `${prefixoHab}Erro na condução! ${passador.nomeCurto} adiantou demais e a bola saiu em ${saida.rotulo} (chance ${chance}%, sorteio ${sorteio}). Posse com ${timeDefensor.nome}.`,
       };
       concluirTurno(estado, idDefensor, zonaReinicio, cobradorRival.id, rngHabilidade);
     } else {
       estado.estatisticas[idDefensor].interceptacoes += 1;
+      zerarImpeto(estado, idAtacante);
+      ganharImpeto(estado, idDefensor, 1);
       const desarmador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
       ativouContraAtaque = verificarAtivacaoContraAtaque(
         estadoSnapshotAntes,
@@ -1363,29 +1741,172 @@ export function executarJogada(
         time: idAtacante,
         sorteio,
         chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
         desfecho: 'Desarme',
         texto: `${prefixoHab}${desarmador.nomeCurto} desarmou ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado na próxima jogada!' : ''}`,
       };
       concluirTurno(estado, idDefensor, zonaDestino, desarmador.id, rngHabilidade);
     }
-  } else if (acao === 'finalizar') {
-    estado.estatisticas[idAtacante].finalizacoes += 1;
-    const goleiroRival = encontrarGoleiro(timeDefensor);
+  } else if (acao === 'dibrar') {
+    const faixaAlvo = obterFaixa(zonaDestino, idAtacante);
+    const margemFalta =
+      DIBRE_CONFIG.margemFaltaSofrida +
+      (faixaAlvo >= 4 ? DIBRE_CONFIG.bonusMargemFaltaTercoFinal : 0);
+    const limiteFaltaDibre = chance + margemFalta;
 
     if (sorteio <= chance) {
+      estado.estatisticas[idAtacante].dibresCertos =
+        (estado.estatisticas[idAtacante].dibresCertos || 0) + 1;
+      if (!estado.bonusDibre) estado.bonusDibre = { meuTime: false, rival: false };
+      estado.bonusDibre[idAtacante] = true;
+      ganharImpeto(estado, idAtacante, 1);
+
+      const marcadorBatido = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+      if (marcadorBatido) {
+        gastarEstamina(marcadorBatido, 3);
+      }
+
+      const movTexto =
+        zonaDestino === previaEfetiva.zonaOrigem
+          ? `em ${zonaDestino}`
+          : `avançando para ${zonaDestino}`;
+      resultado = {
+        tipo: 'dibre',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
+        desfecho: 'Dibre certeiro! (+12% próx.)',
+        texto: `DIBRE! ${passador.nomeCurto} entortou ${marcadorBatido?.nomeCurto || 'a marcação'} ${movTexto} (${chance}%, sorteio ${sorteio})! Próxima jogada com +12% e −50% de pressão!`,
+      };
+      concluirTurno(estado, idAtacante, zonaDestino, passador.id, rngHabilidade);
+    } else if (
+      sorteio <= limiteFaltaDibre &&
+      estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado
+    ) {
+      const marcadorFalta = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+      if (ehZonaAreaPenal(zonaDestino, idAtacante)) {
+        const zonaPenalti = converterDoPontoDeVista('Z5-C', idAtacante);
+        estado.bolaParadaContexto = {
+          tipo: 'penalti',
+          time: idAtacante,
+          zona: zonaPenalti,
+        };
+        resultado = {
+          tipo: 'penalti',
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino: zonaPenalti,
+          desfecho: 'Pênalti sofrido!',
+          texto: `PÊNALTI! ${passador.nomeCurto} partiu pro dibre na área (${zonaDestino}) e foi derrubado por ${marcadorFalta?.nomeCurto || 'defensor'} (chance ${chance}%, sorteio ${sorteio})! Bola na marca da cal!`,
+        };
+        concluirTurno(estado, idAtacante, zonaPenalti, passador.id, rngHabilidade);
+      } else {
+        estado.bolaParadaContexto = {
+          tipo: 'falta_ofensiva',
+          time: idAtacante,
+          zona: zonaDestino,
+        };
+        resultado = {
+          tipo: 'falta',
+          acao,
+          time: idAtacante,
+          sorteio,
+          chance,
+          zonaOrigem: previaEfetiva.zonaOrigem,
+          zonaDestino,
+          desfecho: faixaAlvo >= 3 ? 'Falta perigosa sofrida!' : 'Falta sofrida',
+          texto: `Falta em ${passador.nomeCurto}! ${marcadorFalta?.nomeCurto || 'O marcador'} chegou atrasado no dibre em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio}). Bola parada para ${timeAtacante.nome}!`,
+        };
+        concluirTurno(estado, idAtacante, zonaDestino, passador.id, rngHabilidade);
+      }
+    } else {
+      estado.estatisticas[idDefensor].interceptacoes += 1;
+      zerarImpeto(estado, idAtacante);
+      ganharImpeto(estado, idDefensor, 1);
+      const desarmador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+      ativouContraAtaque = verificarAtivacaoContraAtaque(
+        estadoSnapshotAntes,
+        'desarme',
+        idDefensor,
+      );
+      if (ativouContraAtaque) {
+        if (idDefensor === 'meuTime') estado.bonusContraAtaqueMeu = true;
+        else estado.bonusContraAtaqueRival = true;
+      }
+      resultado = {
+        tipo: 'interceptacao',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
+        desfecho: 'Desarme no dibre',
+        texto: `${desarmador.nomeCurto} leu o dibre e desarmou ${passador.nomeCurto} em ${zonaDestino} (chance ${chance}%, sorteio ${sorteio})!${ativouContraAtaque ? ' Contra-ataque ativado!' : ''}`,
+      };
+      concluirTurno(estado, idDefensor, zonaDestino, desarmador.id, rngHabilidade);
+    }
+  } else if (acao === 'cruzar') {
+    estado.estatisticas[idAtacante].passesTentados += 1;
+    estado.estatisticas[idAtacante].finalizacoes += 1;
+    estado.estatisticas[idAtacante].cruzamentos =
+      (estado.estatisticas[idAtacante].cruzamentos || 0) + 1;
+    const goleiroRival = encontrarGoleiro(timeDefensor);
+    const limiteEscanteio = chance + CRUZAMENTO_CONFIG.margemEscanteioDefesa;
+
+    if (sorteio <= chance) {
+      estado.estatisticas[idAtacante].passesCertos += 1;
       estado.placar[idAtacante] += 1;
+      ganharImpeto(estado, idAtacante, 1);
+      zerarImpeto(estado, idDefensor);
       const saidaRival = encontrarJogadorSaida(timeDefensor);
       const zonaSaida = idDefensor === 'rival' ? 'Z5-C' : 'Z1-C';
+      const origTxt = calculo.ehLinhaDeFundo
+        ? `da linha de fundo (${passador.zona})`
+        : `de ${passador.zona}`;
       resultado = {
         tipo: 'gol',
         acao,
         time: idAtacante,
         sorteio,
         chance,
-        desfecho: 'GOL!',
-        texto: `${prefixoHab}GOL! ${passador.nomeCurto} finalizou de ${passador.zona} e venceu ${goleiroRival.nomeCurto} (chance ${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: obterZonaGolAlvo(idAtacante),
+        desfecho: 'GOL DE CABEÇA!',
+        texto: `GOL! ${passador.nomeCurto} cruzou na medida ${origTxt} e ${receptor.nomeCurto} testou firme em ${receptor.zona} para vencer ${goleiroRival.nomeCurto} (chance ${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
       };
       concluirTurno(estado, idDefensor, zonaSaida, saidaRival.id, rngHabilidade);
+    } else if (
+      sorteio <= limiteEscanteio &&
+      estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado
+    ) {
+      const corredorOrig = obterCorredor(passador.zona, idAtacante);
+      const zonaEscPV = corredorOrig === 'D' ? 'Z5-D' : 'Z5-E';
+      const zonaEscanteio = converterDoPontoDeVista(zonaEscPV, idAtacante);
+      estado.bolaParadaContexto = {
+        tipo: 'escanteio',
+        time: idAtacante,
+        zona: zonaEscanteio,
+      };
+      resultado = {
+        tipo: 'escanteio',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: zonaEscanteio,
+        desfecho: 'Espalmou p/ Escanteio!',
+        texto: `Defesaça de ${goleiroRival.nomeCurto}! ${receptor.nomeCurto} cabeceou após cruzamento de ${passador.nomeCurto} e o goleiro espalmou para ESCANTEIO em ${zonaEscanteio} (${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+      };
+      concluirTurno(estado, idAtacante, zonaEscanteio, passador.id, rngHabilidade);
     } else if (sorteio <= limiteErroExecucao) {
       const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
       resultado = {
@@ -1394,10 +1915,147 @@ export function executarJogada(
         time: idAtacante,
         sorteio,
         chance,
-        desfecho: 'Para fora (tiro de meta)',
-        texto: `${prefixoHab}${passador.nomeCurto} finalizou para fora! Tiro de meta para ${goleiroRival.nomeCurto} (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: obterZonaGolAlvo(idAtacante),
+        desfecho: 'Cabeceio para fora',
+        texto: `${passador.nomeCurto} cruzou na área e ${receptor.nomeCurto} cabeceou raspando o travessão! Tiro de meta para ${goleiroRival.nomeCurto} (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
       };
       concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
+    } else {
+      estado.estatisticas[idDefensor].interceptacoes += 1;
+      zerarImpeto(estado, idAtacante);
+      ganharImpeto(estado, idDefensor, 1);
+      const cortador = escolherInterceptadorNaZona(timeDefensor, zonaDestino);
+      resultado = {
+        tipo: 'interceptacao',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino,
+        desfecho: 'Corte da zaga',
+        texto: `${cortador.nomeCurto} subiu mais alto em ${zonaDestino} e afastou o cruzamento de ${passador.nomeCurto} (${chance}%, sorteio ${sorteio})!`,
+      };
+      concluirTurno(estado, idDefensor, zonaDestino, cortador.id, rngHabilidade);
+    }
+  } else if (acao === 'finalizar') {
+    estado.estatisticas[idAtacante].finalizacoes += 1;
+    const goleiroRival = encontrarGoleiro(timeDefensor);
+    const tipoChute = calculo.tipoChute || previaEfetiva.tipoChute || 'padrao';
+    const tagModo =
+      calculo.modoBolaParada === 'penalti'
+        ? '[Pênalti] '
+        : calculo.modoBolaParada === 'falta_direta'
+          ? '[Falta Direta] '
+          : tipoChute === 'bomba'
+            ? '[Bomba] '
+            : tipoChute === 'colocado'
+              ? '[Colocado] '
+              : prefixoHab;
+
+    const margemErroChute =
+      tipoChute === 'colocado' ? 8 : MARGEM_ERRO_EXECUCAO;
+    const extraBomba = tipoChute === 'bomba' ? 12 : 0;
+    const limiteParaFora = chance + margemErroChute;
+    const limiteRebote =
+      limiteParaFora + (FINALIZACAO_CONFIG.margemReboteDefesa || 14) + extraBomba;
+    const limiteEscanteio =
+      limiteRebote + FINALIZACAO_CONFIG.margemEscanteioDefesa;
+
+    const zonaAreaCentro = converterDoPontoDeVista('Z5-C', idAtacante);
+    const atacantesNaArea = timeAtacante.jogadores.filter(
+      (j) =>
+        !j.ehGoleiro &&
+        !j.extras?.cartoes?.vermelho &&
+        j.zona &&
+        obterFaixa(j.zona, idAtacante) === 5,
+    );
+
+    if (sorteio <= chance) {
+      estado.placar[idAtacante] += 1;
+      ganharImpeto(estado, idAtacante, 1);
+      zerarImpeto(estado, idDefensor);
+      const saidaRival = encontrarJogadorSaida(timeDefensor);
+      const zonaSaida = idDefensor === 'rival' ? 'Z5-C' : 'Z1-C';
+      resultado = {
+        tipo: 'gol',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: obterZonaGolAlvo(idAtacante),
+        desfecho: 'GOL!',
+        texto: `${tagModo}GOL! ${passador.nomeCurto} finalizou de ${passador.zona} e venceu ${goleiroRival.nomeCurto} (chance ${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+      };
+      concluirTurno(estado, idDefensor, zonaSaida, saidaRival.id, rngHabilidade);
+    } else if (sorteio <= limiteParaFora) {
+      const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
+      resultado = {
+        tipo: 'tiro-de-meta',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: obterZonaGolAlvo(idAtacante),
+        desfecho: 'Para fora (tiro de meta)',
+        texto: `${tagModo}${passador.nomeCurto} finalizou para fora! Tiro de meta para ${goleiroRival.nomeCurto} (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
+      };
+      concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
+    } else if (
+      sorteio <= limiteRebote &&
+      calculo.modoBolaParada !== 'penalti' &&
+      atacantesNaArea.length > 0 &&
+      estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado
+    ) {
+      const pegadorRebote =
+        atacantesNaArea.find((j) => j.zona === zonaAreaCentro) ||
+        atacantesNaArea[0];
+      pegadorRebote.zona = zonaAreaCentro;
+      if (estado.bonusRebote) {
+        estado.bonusRebote[idAtacante] = true;
+      }
+      resultado = {
+        tipo: 'rebote',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: zonaAreaCentro,
+        desfecho: 'Rebote na área!',
+        texto: `${tagModo}${goleiroRival.nomeCurto} defendeu no susto e soltou na pequena área! ${pegadorRebote.nomeCurto} ficou com a sobra em ${zonaAreaCentro} (+16% na finalização)!${sufixoVooRival}`,
+      };
+      concluirTurno(estado, idAtacante, zonaAreaCentro, pegadorRebote.id, rngHabilidade);
+    } else if (
+      sorteio <= limiteEscanteio &&
+      estado.turnosJogados[idAtacante] < estado.turnosMaximosPorLado
+    ) {
+      const corredorChute = obterCorredor(passador.zona, idAtacante);
+      const zonaEscPV = corredorChute === 'D' ? 'Z5-D' : 'Z5-E';
+      const zonaEscanteio = converterDoPontoDeVista(zonaEscPV, idAtacante);
+      const cobradorEsc = encontrarJogadorNaOuPertoDaZona(timeAtacante, zonaEscanteio, {
+        ignorarGoleiro: true,
+      });
+      estado.bolaParadaContexto = {
+        tipo: 'escanteio',
+        time: idAtacante,
+        zona: zonaEscanteio,
+      };
+      resultado = {
+        tipo: 'escanteio',
+        acao,
+        time: idAtacante,
+        sorteio,
+        chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: zonaEscanteio,
+        desfecho: 'Defesa p/ Escanteio!',
+        texto: `${tagModo}${goleiroRival.nomeCurto} voou e espalmou a bomba de ${passador.nomeCurto} para ESCANTEIO em ${zonaEscanteio} (${chance}%, sorteio ${sorteio})!${sufixoVooRival}`,
+      };
+      concluirTurno(estado, idAtacante, zonaEscanteio, cobradorEsc.id, rngHabilidade);
     } else {
       const zonaGoleiro = obterZonaProprioGoleiro(idDefensor);
       resultado = {
@@ -1406,8 +2064,10 @@ export function executarJogada(
         time: idAtacante,
         sorteio,
         chance,
+        zonaOrigem: previaEfetiva.zonaOrigem,
+        zonaDestino: obterZonaGolAlvo(idAtacante),
         desfecho: 'Defesa do goleiro',
-        texto: `${prefixoHab}Defendeu ${goleiroRival.nomeCurto}! Chute de ${passador.nomeCurto} parado (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
+        texto: `${tagModo}Defendeu ${goleiroRival.nomeCurto}! Chute de ${passador.nomeCurto} parado (${chance}%, sorteio ${sorteio}).${sufixoVooRival}`,
       };
       concluirTurno(estado, idDefensor, zonaGoleiro, goleiroRival.id, rngHabilidade);
     }
@@ -1417,7 +2077,10 @@ export function executarJogada(
   if (
     idAtacante === 'rival' &&
     ordemUsadaNoTurnoRival === 'pressionar' &&
-    (resultado.tipo === 'acerto' || resultado.tipo === 'conducao' || resultado.tipo === 'gol')
+    (resultado.tipo === 'acerto' ||
+      resultado.tipo === 'conducao' ||
+      resultado.tipo === 'dibre' ||
+      resultado.tipo === 'gol')
   ) {
     estado.bonusProximaJogadaRival = DEFESA_CONFIG.bonusRivalAposPressionar;
   }
@@ -1452,6 +2115,8 @@ export function executarJogada(
     descontoRelogio: descontoRelogioTurno,
     posturaMeu: estado.posturas?.meuTime || POSTURA_PADRAO,
     posturaRival: estado.posturas?.rival || POSTURA_PADRAO,
+    impetoMeu: estado.impeto?.meuTime || 0,
+    impetoRival: estado.impeto?.rival || 0,
     gastosEstamina: gastosEstamina.map((g) => ({
       nome: g.jogador.nomeCurto,
       papel: g.papel,
@@ -1506,6 +2171,28 @@ export function executarConducao(
 ) {
   const previa = avaliarConducao(estado, zonaDestino, opcoes);
   if (!previa) return { valido: false, motivo: 'Condução inválida.' };
+  return executarJogada(estado, previa, rng, opcoes);
+}
+
+export function executarDibre(
+  estado,
+  zonaDestino = null,
+  rng = Math.random,
+  opcoes = {},
+) {
+  const previa = avaliarDibre(estado, zonaDestino);
+  if (!previa) return { valido: false, motivo: 'Dibre inválido.' };
+  return executarJogada(estado, previa, rng, opcoes);
+}
+
+export function executarCruzamento(
+  estado,
+  receptorId = null,
+  rng = Math.random,
+  opcoes = {},
+) {
+  const previa = avaliarCruzamento(estado, receptorId);
+  if (!previa) return { valido: false, motivo: 'Cruzamento indisponível nesta zona.' };
   return executarJogada(estado, previa, rng, opcoes);
 }
 

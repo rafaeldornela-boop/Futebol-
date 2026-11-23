@@ -33,6 +33,11 @@ export const CUSTOS_PASSE_ESTAMINA = Object.freeze({
 });
 
 export const CUSTO_CONDUCAO_ESTAMINA = 6;
+export const CUSTO_DIBRE_ESTAMINA = 5;
+export const CUSTO_CRUZAMENTO_ESTAMINA = Object.freeze({
+  cruzador: 4,
+  cabeceador: 3,
+});
 export const CUSTO_FINALIZACAO_ESTAMINA = 6;
 export const CUSTO_DESLOCAMENTO_POR_FAIXA = 1;
 
@@ -88,14 +93,21 @@ export function obterCorEstamina(jogadorOuEstamina) {
 }
 
 export function obterAtributoEfetivo(jogador, chave) {
-  const base = jogador?.atributos?.[chave] ?? 0;
+  const base =
+    chave === 'dibre'
+      ? (jogador?.atributos?.dibre ?? jogador?.atributos?.tecnica ?? 0)
+      : (jogador?.atributos?.[chave] ?? 0);
   const fatorPosicao = jogador?.foraDePosicao ? FATOR_FORA_POSICAO : 1;
   return base * fatorPosicao * obterMultiplicadorFadiga(jogador);
 }
 
 export function obterAtributoEfetivoComBonus(jogador, chave, bonusAtributos = null) {
   const extra = !jogador?.ehGoleiro ? bonusAtributos?.[chave] || 0 : 0;
-  const base = (jogador?.atributos?.[chave] ?? 0) + extra;
+  const valorBruto =
+    chave === 'dibre'
+      ? (jogador?.atributos?.dibre ?? jogador?.atributos?.tecnica ?? 0)
+      : (jogador?.atributos?.[chave] ?? 0);
+  const base = valorBruto + extra;
   const fatorPosicao = jogador?.foraDePosicao ? FATOR_FORA_POSICAO : 1;
   return base * fatorPosicao * obterMultiplicadorFadiga(jogador);
 }
@@ -182,6 +194,15 @@ export function aplicarCustoEstaminaJogada(previa, reducaoMeta = 0) {
         ? habAtiva.custo
         : CUSTO_CONDUCAO_ESTAMINA;
     cobrar(previa.passador, 'Portador', custoCond);
+  } else if (previa.acao === 'dibrar' && previa.passador) {
+    cobrar(previa.passador, 'Driblador', CUSTO_DIBRE_ESTAMINA);
+  } else if (previa.acao === 'cruzar') {
+    if (previa.passador) {
+      cobrar(previa.passador, 'Cruzador', CUSTO_CRUZAMENTO_ESTAMINA.cruzador);
+    }
+    if (previa.receptor) {
+      cobrar(previa.receptor, 'Cabeceador', CUSTO_CRUZAMENTO_ESTAMINA.cabeceador);
+    }
   } else if (previa.acao === 'finalizar' && previa.passador) {
     const custoFin =
       habAtiva && habAtiva.acaoAlvo === 'finalizar'

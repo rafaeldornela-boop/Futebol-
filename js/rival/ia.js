@@ -22,14 +22,19 @@ function ponderarOpcoes(opcoes, faixaOrigem, timeId) {
     if (previa.acao === 'passe' && previa.receptor) {
       const faixaDestino = obterFaixa(previa.receptor.zona, timeId);
       const deltaFaixa = faixaDestino - faixaOrigem;
-      if (deltaFaixa > 0) multiplicador = 1.3;
-      else if (deltaFaixa < 0) multiplicador = 0.8;
-      if (previa.receptor.ehGoleiro) multiplicador *= 0.45;
+      if (deltaFaixa > 0) multiplicador = 1.65;
+      else if (deltaFaixa < 0) multiplicador = 0.52;
+      if (previa.receptor.ehGoleiro) multiplicador *= 0.35;
     } else if (previa.acao === 'conduzir') {
       const deltaFaixa = previa.calculo.deltaFaixa ?? 0;
-      multiplicador = deltaFaixa > 0 ? 1.3 : 0.9;
+      multiplicador = deltaFaixa > 0 ? 1.55 : 0.8;
+    } else if (previa.acao === 'dibrar') {
+      const deltaFaixa = previa.calculo.deltaFaixa ?? 0;
+      multiplicador = deltaFaixa > 0 ? 1.5 : 1.15;
+    } else if (previa.acao === 'cruzar') {
+      multiplicador = previa.calculo.ehLinhaDeFundo ? 2.1 : 1.8;
     } else if (previa.acao === 'finalizar') {
-      multiplicador = 1.4;
+      multiplicador = previa.modoBolaParada === 'penalti' ? 4.0 : 2.6;
     }
 
     return {

@@ -532,6 +532,14 @@
             class="camada-linha-jogada"
             aria-hidden="true"
           ></svg>
+
+          <!-- Callout visual flutuante para gols, dibres, cruzamentos, pênaltis e defesas -->
+          <div
+            id="callout-lance-campo"
+            class="callout-lance-campo"
+            hidden
+            aria-live="off"
+          ></div>
         </div>
 
         <div class="rotulo-direcao-campo rotulo-direcao-base">
@@ -551,6 +559,42 @@
               Toque no portador da bola e depois em um companheiro ou zona vizinha.
             </div>
             <div class="botoes-confirmacao">
+              <div id="seletor-tipo-chute" class="seletor-tipo-chute" hidden>
+                <button
+                  id="btn-chute-colocado"
+                  type="button"
+                  class="btn-tipo-chute"
+                  data-tipo-chute="colocado"
+                  title="Chute colocado com +6% de precisão e menor chance de ir para fora"
+                >
+                  🎯 Colocado (+6%)
+                </button>
+                <button
+                  id="btn-chute-bomba"
+                  type="button"
+                  class="btn-tipo-chute"
+                  data-tipo-chute="bomba"
+                  title="Chute forte com muito mais chance de gerar rebote na área ou escanteio"
+                >
+                  💥 Bomba (+Rebote)
+                </button>
+              </div>
+              <button
+                id="btn-dibrar"
+                type="button"
+                class="btn-dibrar"
+                hidden
+              >
+                Dibrar
+              </button>
+              <button
+                id="btn-cruzar"
+                type="button"
+                class="btn-cruzar"
+                hidden
+              >
+                Cruzar na Área
+              </button>
               <button
                 id="btn-finalizar"
                 type="button"

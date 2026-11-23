@@ -8,10 +8,18 @@ import {
   simularDeslocamentoBloco,
 } from '../dados/formacoes.js';
 import {
+  ehZonaLinhaDeFundo,
+  ehZonaTercoFinal,
+  obterFaixa,
+} from '../dados/zonas.js';
+import {
   calcularEficienciaNaZona,
   calcularForcaNaLinha,
   calcularForcaNoPortador,
+  CRUZAMENTO_CONFIG,
   DEFESA_CONFIG,
+  DIBRE_CONFIG,
+  FINALIZACAO_CONFIG,
   limitar,
 } from './calculo.js';
 import {
@@ -319,22 +327,37 @@ export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
   const extraLinha =
     multLinhaPostura !== 1 ? { multiplicadorLinhaGeral: multLinhaPostura } : {};
 
+  const timeAtacanteId = timeDefensorId === 'rival' ? 'meuTime' : 'rival';
+  const dibreAtivo = Boolean(estado?.bonusDibre?.[timeAtacanteId]);
+  const zonaDibre = dibreAtivo && estado?.zonaBola ? estado.zonaBola : null;
+
+  const aplicarReducaoDibre = (baseObj) => {
+    if (!zonaDibre) return baseObj;
+    const obj = baseObj ? { ...baseObj } : { ...extraLinha };
+    const atualZona = obj.multiplicadorPortadorPorZona?.[zonaDibre] ?? 1;
+    obj.multiplicadorPortadorPorZona = {
+      ...(obj.multiplicadorPortadorPorZona || {}),
+      [zonaDibre]: atualZona * (1 - DIBRE_CONFIG.reducaoPressaoPosDibre),
+    };
+    return obj;
+  };
+
   if (timeDefensorId === 'rival') {
     const carrinho = estado.defesaRivalTurno?.carrinho;
     if (!carrinho) {
-      return multLinhaPostura !== 1 ? extraLinha : null;
+      return aplicarReducaoDibre(multLinhaPostura !== 1 ? extraLinha : null);
     }
-    return {
+    return aplicarReducaoDibre({
       ...extraLinha,
       multiplicadorPortadorPorJogador: {
         [carrinho.jogadorId]: carrinho.multiplicador,
       },
       habilidadesDefesa: [carrinho],
-    };
+    });
   }
 
   if (timeDefensorId !== 'meuTime' || !estado.defesaTurno) {
-    return multLinhaPostura !== 1 ? extraLinha : null;
+    return aplicarReducaoDibre(multLinhaPostura !== 1 ? extraLinha : null);
   }
 
   const { ordem, zonaBolaAnunciada, zonaDestinoAnunciada, habilidadeAtiva } =
@@ -343,36 +366,36 @@ export function obterModificadoresPressaoTurno(estado, timeDefensorId) {
   if (
     habilidadeAtiva?.efeito?.tipo === 'multiplicador_pressao_portador_jogador'
   ) {
-    return {
+    return aplicarReducaoDibre({
       ...extraLinha,
       multiplicadorPortadorPorJogador: {
         [habilidadeAtiva.jogadorId]: habilidadeAtiva.efeito.multiplicador,
       },
       habilidadesDefesa: [habilidadeAtiva],
-    };
+    });
   }
 
   if (ordem === 'pressionar' && zonaBolaAnunciada) {
-    return {
+    return aplicarReducaoDibre({
       ...extraLinha,
       multiplicadorPortadorPorZona: {
         [zonaBolaAnunciada]: DEFESA_CONFIG.multiplicadorPressionarPortador,
       },
-    };
+    });
   }
 
   if (ordem === 'fechar_linha' && zonaDestinoAnunciada) {
-    return {
+    return aplicarReducaoDibre({
       ...extraLinha,
       fecharLinha: {
         zonaAlvo: zonaDestinoAnunciada,
         multAlvo: DEFESA_CONFIG.multiplicadorFecharLinhaAlvo,
         multOutras: DEFESA_CONFIG.multiplicadorFecharLinhaOutras,
       },
-    };
+    });
   }
 
-  return multLinhaPostura !== 1 ? extraLinha : null;
+  return aplicarReducaoDibre(multLinhaPostura !== 1 ? extraLinha : null);
 }
 
 /**
@@ -403,9 +426,17 @@ export function obterBonusDefesaGoleiroTurno(estado, timeDefensorId) {
 }
 
 /**
- * Retorna os ajustes diretos na chance (%) para o time atacante no turno atual.
+ * Retorna os ajustes diretos na chance (%) para o time atacante no turno atual,
+ * incluindo Postura, Contra-ataque, Ímpeto (Momentum), Marcador batido (Dibre),
+ * Chegada ao Terço Final, Cruzamento da Linha de Fundo e Bolas Paradas.
  */
-export function obterAjustesChanceTurno(estado, timeAtacanteId, acao, tipoPasseId = null) {
+export function obterAjustesChanceTurno(
+  estado,
+  timeAtacanteId,
+  acao,
+  tipoPasseId = null,
+  contextoExtra = null,
+) {
   const posturaMeu = estado?.posturas?.meuTime || POSTURA_PADRAO;
   const posturaRival = estado?.posturas?.rival || POSTURA_PADRAO;
   const posturaAtacante = timeAtacanteId === 'meuTime' ? posturaMeu : posturaRival;
@@ -413,6 +444,95 @@ export function obterAjustesChanceTurno(estado, timeAtacanteId, acao, tipoPasseI
   const ajustes = [
     ...obterAjustesChancePostura(posturaAtacante, acao, tipoPasseId),
   ];
+
+  // 1. Ímpeto (Momentum) do time atacante
+  const nivelImpeto = estado?.impeto?.[timeAtacanteId] || 0;
+  if (nivelImpeto > 0) {
+    ajustes.push({
+      rotulo: `Ímpeto (Nív. ${nivelImpeto})`,
+      valor: nivelImpeto * DEFESA_CONFIG.bonusPorNivelImpeto,
+    });
+  }
+
+  // 2. Bônus de Marcador Batido (após Dibre bem-sucedido)
+  if (estado?.bonusDibre?.[timeAtacanteId]) {
+    ajustes.push({
+      rotulo: 'Marcador batido (Dibre)',
+      valor: DIBRE_CONFIG.bonusDibreProximaJogada,
+    });
+  }
+
+  // 3. Bônus de Recepção de Cruzamento / Passe da Linha de Fundo para finalização
+  if (estado?.bonusCruzamento?.[timeAtacanteId] && acao === 'finalizar') {
+    ajustes.push({
+      rotulo: 'Passe da linha de fundo',
+      valor: CRUZAMENTO_CONFIG.bonusRecepcaoCruzamento,
+    });
+  }
+
+  // 3b. Bônus de Rebote na Área (goleiro fora de posição)
+  if (estado?.bonusRebote?.[timeAtacanteId] && acao === 'finalizar') {
+    ajustes.push({
+      rotulo: 'Rebote na área',
+      valor: FINALIZACAO_CONFIG.bonusReboteArea,
+    });
+  }
+
+  // 4. Chegada ao Terço Final e Passe da Linha de Fundo
+  const zonaOrigem = contextoExtra?.zonaOrigem || estado?.zonaBola;
+  const zonaDestino = contextoExtra?.zonaDestino || null;
+  if (zonaOrigem && zonaDestino) {
+    const faixaOrig = obterFaixa(zonaOrigem, timeAtacanteId);
+    const faixaDest = obterFaixa(zonaDestino, timeAtacanteId);
+
+    if (
+      (acao === 'passe' || acao === 'conduzir' || acao === 'dibrar') &&
+      faixaDest >= 4 &&
+      faixaDest > faixaOrig
+    ) {
+      ajustes.push({
+        rotulo: 'Infiltração terço final',
+        valor: DEFESA_CONFIG.bonusInfiltracaoTercoFinal,
+      });
+    }
+
+    if (
+      acao === 'passe' &&
+      ehZonaLinhaDeFundo(zonaOrigem, timeAtacanteId) &&
+      ehZonaTercoFinal(zonaDestino, timeAtacanteId)
+    ) {
+      ajustes.push({
+        rotulo: 'Cruzamento rasteiro (linha de fundo)',
+        valor: CRUZAMENTO_CONFIG.bonusPasseLinhaDeFundo,
+      });
+    }
+  }
+
+  // 5. Bolas Paradas Ofensivas (Escanteio e Falta Perigosa)
+  const bp = estado?.bolaParadaContexto;
+  if (bp && bp.time === timeAtacanteId) {
+    if (bp.tipo === 'escanteio') {
+      if (acao === 'cruzar') {
+        ajustes.push({
+          rotulo: 'Escanteio na área',
+          valor: DEFESA_CONFIG.bonusEscanteioCruzamento,
+        });
+      } else if (acao === 'passe') {
+        const ehCurto = tipoPasseId === 'curto' || tipoPasseId === 'lateral';
+        ajustes.push({
+          rotulo: ehCurto ? 'Escanteio curto' : 'Escanteio ensaiado',
+          valor: ehCurto ? DEFESA_CONFIG.bonusEscanteioCurto : 10,
+        });
+      }
+    } else if (bp.tipo === 'falta_ofensiva') {
+      if (acao === 'passe' || acao === 'cruzar') {
+        ajustes.push({
+          rotulo: 'Falta ensaiada',
+          valor: DEFESA_CONFIG.bonusFaltaOfensivaPasse,
+        });
+      }
+    }
+  }
 
   if (timeAtacanteId === 'meuTime') {
     if (estado.bonusContraAtaqueMeu) {

@@ -162,6 +162,42 @@ export function podeFinalizarNaZona(zonaId, timeId) {
 }
 
 /**
+ * Indica se a zona é a linha de fundo lateral (Z5-E ou Z5-D no ponto de vista do time atacante).
+ */
+export function ehZonaLinhaDeFundo(zonaId, timeId = 'meuTime') {
+  const zonaPV = zonaParaPontoDeVista(zonaId, timeId);
+  return zonaPV === 'Z5-E' || zonaPV === 'Z5-D';
+}
+
+/**
+ * Indica se a zona permite cruzamento na área (linha de fundo Z5-E/Z5-D ou alas ofensivas Z4-E/Z4-D).
+ */
+export function podeCruzarNaZona(zonaId, timeId = 'meuTime') {
+  const zonaPV = zonaParaPontoDeVista(zonaId, timeId);
+  return (
+    zonaPV === 'Z5-E' ||
+    zonaPV === 'Z5-D' ||
+    zonaPV === 'Z4-E' ||
+    zonaPV === 'Z4-D'
+  );
+}
+
+/**
+ * Indica se a zona pertence ao terço final ofensivo (faixas 4 ou 5 no ponto de vista do time).
+ */
+export function ehZonaTercoFinal(zonaId, timeId = 'meuTime') {
+  const faixa = obterFaixa(zonaId, timeId);
+  return faixa === 4 || faixa === 5;
+}
+
+/**
+ * Indica se a zona fica dentro da grande área ofensiva (faixa 5: Z5-E, Z5-C, Z5-D).
+ */
+export function ehZonaAreaPenal(zonaId, timeId = 'meuTime') {
+  return obterFaixa(zonaId, timeId) === 5;
+}
+
+/**
  * Retorna a zona do goleiro adversário para o time que está atacando.
  */
 export function obterZonaGolAlvo(timeId) {

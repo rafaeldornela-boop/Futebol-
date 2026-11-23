@@ -29,6 +29,8 @@ import {
   aplicarEstourouRelogioAtaque,
   aplicarOrdemDefensiva,
   avaliarConducao,
+  avaliarCruzamento,
+  avaliarDibre,
   avaliarFinalizacao,
   avaliarPasse,
   criarPartida,
@@ -133,9 +135,18 @@ function criarSintetizadorSom() {
       tocarNota(340, 0.08, 'sine', 0.07, 0);
       tocarNota(510, 0.1, 'triangle', 0.06, 0.05);
     },
+    dibre() {
+      tocarNota(440, 0.07, 'triangle', 0.07, 0);
+      tocarNota(587.33, 0.08, 'triangle', 0.07, 0.05);
+      tocarNota(783.99, 0.12, 'sine', 0.08, 0.1);
+    },
     apito() {
       tocarNota(2100, 0.12, 'sine', 0.04, 0);
       tocarNota(2280, 0.14, 'sine', 0.035, 0.14);
+    },
+    penalti() {
+      tocarNota(2350, 0.18, 'sine', 0.055, 0);
+      tocarNota(2420, 0.25, 'sine', 0.05, 0.18);
     },
     interceptacao() {
       tocarNota(190, 0.14, 'sawtooth', 0.05, 0);
@@ -155,7 +166,8 @@ function formatarAtributosResumoReserva(reserva) {
   if (reserva.ehGoleiro) {
     return `DEF ${a.defesa} · PAS ${a.passe} · DOM ${a.dominio} · POS ${a.posicionamento}`;
   }
-  return `PAS ${a.passe} · DOM ${a.dominio} · MAR ${a.marcacao} · DES ${a.desarme} · VEL ${a.velocidade} · FIN ${a.finalizacao}`;
+  const dib = a.dibre ?? a.tecnica;
+  return `PAS ${a.passe} · DOM ${a.dominio} · DIB ${dib} · MAR ${a.marcacao} · DES ${a.desarme} · VEL ${a.velocidade} · FIN ${a.finalizacao}`;
 }
 
 function iniciarJogo() {
@@ -316,7 +328,10 @@ function iniciarJogo() {
   const campoUI = criarControladorCampo({
     onCliqueJogador: tratarCliqueJogador,
     onCliqueZona: tratarCliqueZona,
+    onSelecionarDibre: selecionarDibre,
+    onSelecionarCruzamento: selecionarCruzamento,
     onSelecionarFinalizacao: selecionarFinalizacao,
+    onAlterarTipoChute: alterarTipoChute,
     onSelecionarHabilidadeOfensiva: selecionarHabilidadeOfensiva,
     onConfirmarJogada: confirmarJogadaUsuario,
     onCancelarJogada: cancelarPrevia,
@@ -1008,6 +1023,7 @@ function iniciarJogo() {
     const itens = [
       { valor: `${meu.passesCertos}/${meu.passesTentados}`, rotulo: 'Seus passes certos' },
       { valor: `${meu.finalizacoes} × ${rival.finalizacoes}`, rotulo: 'Finalizações' },
+      { valor: `${meu.dibresCertos || 0} × ${rival.dibresCertos || 0}`, rotulo: 'Dibres certos' },
       { valor: `${meu.interceptacoes} × ${rival.interceptacoes}`, rotulo: 'Interceptações' },
     ];
 
@@ -1050,6 +1066,8 @@ function iniciarJogo() {
 
   function tocarSomResultado(tipo) {
     if (tipo === 'gol') som.gol();
+    else if (tipo === 'dibre') som.dibre();
+    else if (tipo === 'penalti' || tipo === 'falta') som.penalti();
     else if (tipo === 'acerto' || tipo === 'conducao') som.acerto();
     else if (tipo === 'interceptacao' || tipo === 'defesa') som.interceptacao();
     else if (tipo === 'lateral' || tipo === 'escanteio' || tipo === 'tiro-de-meta') som.apito();
@@ -1235,7 +1253,7 @@ function iniciarJogo() {
     if (
       timeId === 'rival' &&
       portador &&
-      podeFinalizarNaZona(portador.zona, 'meuTime') &&
+      Boolean(avaliarFinalizacao(partida)) &&
       partida.times.rival.jogadores.find((j) => j.id === jogadorId)?.ehGoleiro
     ) {
       selecionarFinalizacao();
@@ -1272,7 +1290,7 @@ function iniciarJogo() {
     }
 
     if (
-      podeFinalizarNaZona(portador.zona, 'meuTime') &&
+      Boolean(avaliarFinalizacao(partida)) &&
       zonaId === obterZonaGolAlvo('meuTime')
     ) {
       selecionarFinalizacao();
@@ -1289,7 +1307,7 @@ function iniciarJogo() {
     }
   }
 
-  function selecionarFinalizacao() {
+  function selecionarDibre(zonaDestino = null) {
     if (
       estadoTela !== 'playing' ||
       partida.timeComBola !== 'meuTime' ||
@@ -1299,7 +1317,7 @@ function iniciarJogo() {
       return;
     }
 
-    const avaliacao = avaliarFinalizacao(partida);
+    const avaliacao = avaliarDibre(partida, zonaDestino);
     if (!avaliacao) return;
 
     habilidadeOfensivaModo = null;
@@ -1309,11 +1327,73 @@ function iniciarJogo() {
     atualizarTela();
   }
 
+  function selecionarCruzamento(receptorId = null) {
+    if (
+      estadoTela !== 'playing' ||
+      partida.timeComBola !== 'meuTime' ||
+      partida.encerrada ||
+      rivalPensando
+    ) {
+      return;
+    }
+
+    const avaliacao = avaliarCruzamento(partida, receptorId);
+    if (!avaliacao) return;
+
+    habilidadeOfensivaModo = null;
+    portadorSelecionado = true;
+    previaJogada = avaliacao;
+    som.clique();
+    atualizarTela();
+  }
+
+  function selecionarFinalizacao(tipoChute = 'colocado') {
+    if (
+      estadoTela !== 'playing' ||
+      partida.timeComBola !== 'meuTime' ||
+      partida.encerrada ||
+      rivalPensando
+    ) {
+      return;
+    }
+
+    const avaliacao = avaliarFinalizacao(partida, { tipoChute });
+    if (!avaliacao) return;
+
+    habilidadeOfensivaModo = null;
+    portadorSelecionado = true;
+    previaJogada = avaliacao;
+    som.clique();
+    atualizarTela();
+  }
+
+  function alterarTipoChute(tipoChute) {
+    if (
+      estadoTela !== 'playing' ||
+      partida.timeComBola !== 'meuTime' ||
+      !previaJogada ||
+      previaJogada.acao !== 'finalizar'
+    ) {
+      return;
+    }
+    const habilidadeId = previaJogada.habilidadeAtiva?.id || null;
+    const novaPrevia = avaliarFinalizacao(partida, {
+      habilidadeId,
+      modoBolaParada: previaJogada.modoBolaParada || null,
+      tipoChute,
+    });
+    if (!novaPrevia) return;
+    previaJogada = novaPrevia;
+    som.clique();
+    atualizarTela();
+  }
+
   function confirmarJogadaUsuario() {
     if (estadoTela !== 'playing' || !previaJogada || partida.timeComBola !== 'meuTime') {
       return;
     }
 
+    const previaAntes = previaJogada;
     const execucao = executarJogada(partida, previaJogada);
     if (!execucao.valido) return;
 
@@ -1323,6 +1403,7 @@ function iniciarJogo() {
     inspecionadoId = partida.portadorId;
 
     tocarSomResultado(execucao.resultado.tipo);
+    campoUI.animarLance(execucao.resultado, previaAntes);
 
     if (partida.encerrada) {
       encerrarPartidaAtual();
@@ -1413,6 +1494,7 @@ function iniciarJogo() {
 
     if (execucao.valido) {
       tocarSomResultado(execucao.resultado.tipo);
+      campoUI.animarLance(execucao.resultado, jogadaFinal);
     }
 
     if (partida.encerrada) {

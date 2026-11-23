@@ -507,7 +507,7 @@ test('partida completa termina exatamente após 10 turnos por lado', () => {
   const partida = criarPartida();
   let passos = 0;
 
-  while (!partida.encerrada && passos < 40) {
+  while (!partida.encerrada && passos < 60) {
     passos += 1;
     if (partida.timeComBola === 'meuTime') {
       const cond = avaliarConducao(partida, 'Z2-C') || avaliarConducao(partida, 'Z1-C');
@@ -1337,6 +1337,181 @@ test('ferramenta de equilíbrio (simulação headless) roda partidas completas c
   assert.ok(sim.mediaEstaminaFinalMeu >= 0 && sim.mediaEstaminaFinalMeu <= 100);
   assert.ok(sim.mediaEstaminaFinalRival >= 0 && sim.mediaEstaminaFinalRival <= 100);
 });
+
+import {
+  avaliarCruzamento,
+  avaliarDibre,
+  executarCruzamento,
+  executarDibre,
+} from '../js/regras/partida.js';
+import {
+  ehZonaLinhaDeFundo,
+  podeCruzarNaZona,
+} from '../js/dados/zonas.js';
+
+test('atributo dibre e ação dibrar: aplica bônus pós-dibre (+12% e -50% pressão), ganha ímpeto e gera falta/pênalti ao sofrer falta no terço final', () => {
+  const p = criarPartida();
+  for (const j of [...p.times.meuTime.jogadores, ...p.times.rival.jogadores]) {
+    assert.equal(typeof j.atributos.dibre, 'number');
+    assert.ok(j.atributos.dibre >= 1 && j.atributos.dibre <= 100);
+  }
+
+  // Coloca ponta em Z4-E com marcador rival
+  const ponta = p.times.meuTime.jogadores.find((j) => j.papel === 'PONTA_E');
+  const marcador = p.times.rival.jogadores.find((j) => j.papel === 'LAT_D');
+  ponta.zona = 'Z4-E';
+  marcador.zona = 'Z4-E';
+  p.portadorId = ponta.id;
+  p.zonaBola = 'Z4-E';
+
+  const prevDibreLocal = avaliarDibre(p, 'Z4-E');
+  const prevDibreAvanco = avaliarDibre(p, 'Z5-E');
+  assert.ok(prevDibreLocal);
+  assert.ok(prevDibreAvanco);
+  assert.equal(prevDibreLocal.acao, 'dibrar');
+  assert.ok(prevDibreAvanco.calculo.ajustesChance.some((a) => a.rotulo === 'Infiltração terço final' && a.valor === 6));
+
+  // Executa dibre avançando para a linha de fundo (Z5-E) com sucesso
+  const estMarcadorAntes = obterEstamina(marcador);
+  const resDibre = executarDibre(p, 'Z5-E', () => 0.05);
+  assert.equal(resDibre.valido, true);
+  assert.equal(resDibre.resultado.tipo, 'dibre');
+  assert.equal(p.zonaBola, 'Z5-E');
+  assert.equal(p.bonusDibre.meuTime, true);
+  assert.equal(p.impeto.meuTime, 1);
+  assert.ok(obterEstamina(marcador) < estMarcadorAntes); // cansou o marcador
+  assert.equal(p.estatisticas.meuTime.dibresCertos, 1);
+
+  // Próxima jogada do portador tem +12% de Marcador batido (Dibre) + +3% de Ímpeto (Nív. 1)
+  const ca = p.times.meuTime.jogadores.find((j) => j.papel === 'CA');
+  ca.zona = 'Z5-C';
+  const prevPassePosDibre = avaliarPasse(p, ca.id);
+  assert.ok(prevPassePosDibre.calculo.ajustesChance.some((a) => a.rotulo.includes('Marcador batido (Dibre)') && a.valor === 12));
+  assert.ok(prevPassePosDibre.calculo.ajustesChance.some((a) => a.rotulo.includes('Ímpeto') && a.valor === 3));
+
+  // Dibre derrubado dentro da grande área (Z5-C) por margem curta gera Pênalti
+  const pPen = criarPartida();
+  const caPen = pPen.times.meuTime.jogadores.find((j) => j.papel === 'CA');
+  const zagPen = pPen.times.rival.jogadores.find((j) => j.papel === 'ZAG1');
+  caPen.zona = 'Z5-C';
+  zagPen.zona = 'Z5-C';
+  pPen.portadorId = caPen.id;
+  pPen.zonaBola = 'Z5-C';
+  const prevPen = avaliarDibre(pPen, 'Z5-C');
+  const sorteioQuase = (prevPen.calculo.chance + 5) / 100;
+  const resPen = executarDibre(pPen, 'Z5-C', () => sorteioQuase);
+  assert.equal(resPen.resultado.tipo, 'penalti');
+  assert.equal(pPen.timeComBola, 'meuTime');
+  assert.equal(pPen.bolaParadaContexto?.tipo, 'penalti');
+
+  // Na cobrança de pênalti, a finalização tem base 78 e pressão de linha zerada
+  const prevCobrancaPen = avaliarFinalizacao(pPen);
+  assert.ok(prevCobrancaPen);
+  assert.equal(prevCobrancaPen.calculo.base, 78);
+  assert.equal(prevCobrancaPen.calculo.pressaoPortadorOrigem, 0);
+});
+
+test('cruzamento na linha de fundo, passe da linha de fundo (+15% finalização), chegada ao terço final e bolas paradas interativas', () => {
+  assert.equal(ehZonaLinhaDeFundo('Z5-E', 'meuTime'), true);
+  assert.equal(ehZonaLinhaDeFundo('Z5-D', 'meuTime'), true);
+  assert.equal(ehZonaLinhaDeFundo('Z5-C', 'meuTime'), false);
+  assert.equal(podeCruzarNaZona('Z5-E', 'meuTime'), true);
+  assert.equal(podeCruzarNaZona('Z4-D', 'meuTime'), true);
+  assert.equal(podeCruzarNaZona('Z3-E', 'meuTime'), false);
+
+  const p = criarPartida();
+  const ponta = p.times.meuTime.jogadores.find((j) => j.papel === 'PONTA_D');
+  const ca = p.times.meuTime.jogadores.find((j) => j.papel === 'CA');
+  ponta.zona = 'Z5-D';
+  ca.zona = 'Z5-C';
+  p.portadorId = ponta.id;
+  p.zonaBola = 'Z5-D';
+
+  // Avalia cruzamento da linha de fundo (Z5-D -> Z5-C, base 42)
+  const prevCruz = avaliarCruzamento(p, ca.id);
+  assert.ok(prevCruz);
+  assert.equal(prevCruz.acao, 'cruzar');
+  assert.equal(prevCruz.calculo.base, 42);
+  assert.equal(prevCruz.receptor.id, ca.id);
+
+  // Executa cruzamento com gol de cabeça
+  const resGolCabeca = executarCruzamento(p, ca.id, () => 0.01);
+  assert.equal(resGolCabeca.valido, true);
+  assert.equal(resGolCabeca.resultado.tipo, 'gol');
+  assert.equal(p.placar.meuTime, 1);
+
+  // Passe rasteiro da linha de fundo para a área dá +10% no passe e prepara +15% na finalização (bonusCruzamento)
+  const p2 = criarPartida();
+  const pE = p2.times.meuTime.jogadores.find((j) => j.papel === 'PONTA_E');
+  const ca2 = p2.times.meuTime.jogadores.find((j) => j.papel === 'CA');
+  pE.zona = 'Z5-E';
+  ca2.zona = 'Z5-C';
+  p2.portadorId = pE.id;
+  p2.zonaBola = 'Z5-E';
+
+  const prevPasseFundo = avaliarPasse(p2, ca2.id);
+  assert.ok(prevPasseFundo.calculo.ajustesChance.some((a) => a.rotulo.includes('Cruzamento rasteiro') && a.valor === 10));
+  executarPasse(p2, ca2.id, () => 0.01);
+  assert.equal(p2.bonusCruzamento.meuTime, true);
+
+  const prevChuteArea = avaliarFinalizacao(p2);
+  assert.ok(prevChuteArea);
+  assert.ok(prevChuteArea.calculo.ajustesChance.some((a) => a.rotulo.includes('Passe da linha de fundo') && a.valor === 15));
+
+  // Defesa difícil do goleiro em cabeceio após cruzamento espalma para Escanteio mantendo a posse ofensiva
+  const p3 = criarPartida();
+  const pE3 = p3.times.meuTime.jogadores.find((j) => j.papel === 'PONTA_E');
+  const ca3 = p3.times.meuTime.jogadores.find((j) => j.papel === 'CA');
+  pE3.zona = 'Z5-E';
+  ca3.zona = 'Z5-C';
+  p3.portadorId = pE3.id;
+  p3.zonaBola = 'Z5-E';
+  const prevCruz3 = avaliarCruzamento(p3, ca3.id);
+  const resEscanteio = executarJogada(p3, prevCruz3, () => (prevCruz3.calculo.chance + 5) / 100, {
+    rngHabilidade: () => 0.99,
+  });
+  assert.equal(resEscanteio.resultado.tipo, 'escanteio');
+  assert.equal(p3.timeComBola, 'meuTime');
+  assert.equal(p3.bolaParadaContexto?.tipo, 'escanteio');
+
+  // No escanteio, cruzar na área recebe +12% de bônus
+  ca3.zona = 'Z5-C';
+  const prevCruzEscanteio = avaliarCruzamento(p3, ca3.id);
+  assert.ok(prevCruzEscanteio);
+  assert.ok(prevCruzEscanteio.calculo.ajustesChance.some((a) => a.rotulo.includes('Escanteio na área') && a.valor === 12));
+});
+
+test('finalização aprimorada: 16 turnos por lado, chute colocado (+6%) vs bomba (+rebote) e rebote na área (+16%)', () => {
+  assert.equal(TURNOS_POR_LADO, 16);
+
+  const p = criarPartida();
+  const ca = p.times.meuTime.jogadores.find((j) => j.papel === 'CA');
+  const ponta = p.times.meuTime.jogadores.find((j) => j.papel === 'PONTA_E');
+  ca.zona = 'Z5-C';
+  ponta.zona = 'Z5-E';
+  p.portadorId = ca.id;
+  p.zonaBola = 'Z5-C';
+
+  const prevPadrao = avaliarFinalizacao(p, { tipoChute: 'padrao' });
+  const prevColocado = avaliarFinalizacao(p, { tipoChute: 'colocado' });
+  const prevBomba = avaliarFinalizacao(p, { tipoChute: 'bomba' });
+  assert.ok(prevColocado.calculo.chance > prevPadrao.calculo.chance);
+  assert.ok(prevColocado.calculo.chance > prevBomba.calculo.chance);
+
+  // Bomba defendida dentro da faixa de rebote deixa atacante na área com +16% na próxima finalização
+  const sorteioRebote = (prevBomba.calculo.chance + 20) / 100;
+  const resRebote = executarJogada(p, prevBomba, () => sorteioRebote, {
+    rngHabilidade: () => 0.99,
+  });
+  assert.equal(resRebote.resultado.tipo, 'rebote');
+  assert.equal(p.timeComBola, 'meuTime');
+  assert.equal(p.bonusRebote.meuTime, true);
+
+  const prevPosRebote = avaliarFinalizacao(p, { tipoChute: 'colocado' });
+  assert.ok(prevPosRebote.calculo.ajustesChance.some((a) => a.rotulo.includes('Rebote na área') && a.valor === 16));
+});
+
+
 
 
 
