@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prancheta 11 — Futebol Tático por Zonas</title>
+  <meta
+    name="description"
+    content="Jogo de futebol de técnico por turnos em campo vertical de 17 zonas (4-3-3), pressão dupla, ordens defensivas e finalização, em HTML, CSS e JavaScript puros."
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body data-state="title">
+  <!-- Tela Inicial -->
+  <section id="tela-titulo" class="sobreposicao-tela" aria-label="Tela inicial do jogo">
+    <div class="cartao-titulo">
+      <div class="emblema-titulo" aria-hidden="true">
+        <svg viewBox="0 0 84 116" width="76" height="104" role="presentation">
+          <rect x="4" y="4" width="76" height="108" rx="8" fill="#14532D" stroke="#F5B82E" stroke-width="3" />
+          <line x1="4" y1="58" x2="80" y2="58" stroke="#F8FAFC" stroke-width="1.5" stroke-opacity="0.7" />
+          <circle cx="42" cy="58" r="11" fill="none" stroke="#F8FAFC" stroke-width="1.5" stroke-opacity="0.7" />
+          <rect x="23" y="4" width="38" height="14" fill="none" stroke="#F8FAFC" stroke-width="1.5" stroke-opacity="0.6" />
+          <rect x="23" y="98" width="38" height="14" fill="none" stroke="#F8FAFC" stroke-width="1.5" stroke-opacity="0.6" />
+          <path d="M42 88 L22 58 L42 26" fill="none" stroke="#F5B82E" stroke-width="2.6" stroke-dasharray="4 3" stroke-linecap="round" />
+          <circle cx="42" cy="88" r="4" fill="#F8FAFC" />
+          <circle cx="22" cy="58" r="4" fill="#F5B82E" />
+          <circle cx="42" cy="26" r="4" fill="#F8FAFC" />
+        </svg>
+      </div>
+
+      <h1 class="titulo-jogo">Prancheta 11</h1>
+      <p class="subtitulo-jogo">Futebol Tático Vertical · Modo Campanha</p>
+
+      <div class="menu-legado-barra" aria-label="Resumo do clube">
+        <span class="menu-legado-pill">Legado: <strong id="menu-pontos-legado" class="num-tabular">0 pts</strong></span>
+        <span class="menu-legado-pill">Galeria: <strong id="menu-trofeus-contagem" class="num-tabular">0 troféu(s) · 0/5</strong></span>
+      </div>
+
+      <div class="menu-config-grid">
+        <div class="menu-config-bloco">
+          <span class="titulo-seed-label">Clube inicial</span>
+          <div id="menu-opcoes-clube" class="menu-opcoes-grade"></div>
+        </div>
+
+        <div class="menu-config-bloco">
+          <span class="titulo-seed-label">Técnico</span>
+          <div id="menu-opcoes-tecnico" class="menu-opcoes-grade"></div>
+        </div>
+
+        <div class="menu-config-bloco">
+          <span class="titulo-seed-label">Dificuldade (0 a 5)</span>
+          <div id="menu-opcoes-dificuldade" class="menu-dif-linha"></div>
+          <p id="menu-dificuldade-resumo" class="menu-dif-resumo">Padrão (+0 força rival)</p>
+        </div>
+
+        <div class="titulo-seed-bloco">
+          <label for="input-seed-titulo" class="titulo-seed-label">Seed da campanha</label>
+          <div class="titulo-seed-linha">
+            <input
+              id="input-seed-titulo"
+              type="text"
+              class="input-seed"
+              maxlength="24"
+              placeholder="Ex.: BRI-AB1234"
+              autocomplete="off"
+            />
+            <button
+              id="btn-sortear-seed"
+              type="button"
+              class="btn-secundario btn-seed-sortear"
+              title="Gerar nova seed aleatória"
+            >
+              Nova Seed
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="titulo-acoes-principais">
+        <button
+          id="btn-continuar-campanha"
+          type="button"
+          class="btn-finalizar btn-iniciar"
+          hidden
+        >
+          Continuar Campanha Salva
+        </button>
+
+        <button
+          id="btn-iniciar"
+          type="button"
+          class="btn-primario btn-iniciar"
+          data-start="true"
+        >
+          Nova Campanha
+        </button>
+
+        <div class="menu-navegacao-sec">
+          <button id="btn-abrir-clube" type="button" class="btn-secundario">
+            Clube (Melhorias)
+          </button>
+          <button id="btn-abrir-trofeus" type="button" class="btn-secundario">
+            Sala de Troféus
+          </button>
+          <button id="btn-partida-rapida" type="button" class="btn-secundario">
+            Partida Avulsa
+          </button>
+          <button id="btn-abrir-simulacao" type="button" class="btn-fantasma">
+            Equilíbrio (Debug 200×)
+          </button>
+        </div>
+      </div>
+
+      <p class="dica-controles">
+        Enter inicia · Na partida: P pausa · M som
+      </p>
+    </div>
+  </section>
+
+  <!-- Tela do Clube (Melhorias Permanentes, Uniformes, Desbloqueios, JSON) -->
+  <section id="tela-clube" class="tela-meta" aria-label="Tela do Clube">
+    <div id="conteudo-clube" class="meta-container"></div>
+  </section>
+
+  <!-- Sala de Troféus (Conquistas e Campanhas Vencidas) -->
+  <section id="tela-trofeus" class="tela-meta" aria-label="Sala de Troféus">
+    <div id="conteudo-trofeus" class="meta-container"></div>
+  </section>
+
+  <!-- Ferramenta de Equilíbrio (Modo Debug: 200 Partidas Automáticas) -->
+  <section id="tela-simulacao" class="tela-meta" aria-label="Ferramenta de Equilíbrio">
+    <div class="meta-container">
+      <header class="meta-cabecalho">
+        <div class="meta-cab-esq">
+          <span class="no-tipo-etiqueta">MODO DEBUG · BALANCEAMENTO</span>
+          <h2 class="no-titulo">Ferramenta de Equilíbrio (200 Partidas)</h2>
+        </div>
+        <div class="meta-cab-dir">
+          <button id="btn-sim-voltar" type="button" class="btn-secundario">
+            Voltar ao Menu
+          </button>
+        </div>
+      </header>
+
+      <section class="meta-secao meta-card">
+        <p class="meta-card-desc">
+          Executa 200 partidas completas em sequência usando o algoritmo da IA nos dois lados, aplicando clube, técnico e melhorias atuais do Clube.
+        </p>
+
+        <div class="sim-controles">
+          <div class="sim-campo">
+            <label for="sim-forca-rival" class="titulo-seed-label">
+              Força do rival: <strong id="sim-forca-valor" class="num-tabular">71</strong>
+            </label>
+            <input id="sim-forca-rival" type="range" min="55" max="92" step="1" value="71" class="sim-range" />
+          </div>
+
+          <div class="sim-campo">
+            <label for="sim-clube" class="titulo-seed-label">Clube simulado</label>
+            <select id="sim-clube" class="input-seed">
+              <option value="equilibrado">Atlético Brisa (Equilibrado)</option>
+              <option value="retranca">Atlético Retranca (Retranca)</option>
+              <option value="ataque_total">Ataque Total FC (Ataque Total)</option>
+            </select>
+          </div>
+
+          <div class="sim-campo">
+            <label for="sim-tecnico" class="titulo-seed-label">Técnico simulado</label>
+            <select id="sim-tecnico" class="input-seed">
+              <option value="padrao">Clássico</option>
+              <option value="motivador">Motivador (+2 atributos)</option>
+              <option value="negociador">Negociador</option>
+              <option value="fisiologista">Fisiologista</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sim-acoes">
+          <button id="btn-rodar-simulacao" type="button" class="btn-primario">
+            Rodar 200 Partidas
+          </button>
+        </div>
+      </section>
+
+      <div id="simulacao-resultado" class="meta-secao" aria-live="polite">
+        <p class="texto-suave">Ajuste a força do rival e clique em "Rodar 200 Partidas" para medir taxas de vitória, empate, derrota, gols e estamina.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Modo Campanha: Mapa & Telas de Nós -->
+  <div id="app-campanha" class="app-campanha">
+    <header class="camp-hud" aria-label="Estado da campanha">
+      <div class="camp-hud-marca">
+        <span class="marca-curta">Prancheta 11</span>
+        <span id="camp-hud-clube" class="camp-hud-clube">Atlético Brisa</span>
+      </div>
+
+      <div class="camp-hud-metricas num-tabular">
+        <div class="camp-metrica">
+          <span class="camp-metrica-rotulo">Caixa</span>
+          <strong id="camp-hud-dinheiro" class="camp-metrica-valor valor-ouro">$300</strong>
+        </div>
+        <div class="camp-metrica">
+          <span class="camp-metrica-rotulo">Elenco</span>
+          <strong id="camp-hud-elenco" class="camp-metrica-valor">18/18 · Est. 100%</strong>
+        </div>
+        <div class="camp-metrica">
+          <span class="camp-metrica-rotulo">Sequência</span>
+          <strong id="camp-hud-derrotas" class="camp-metrica-valor" data-perigo="false">Derrotas seg.: 0/3</strong>
+        </div>
+        <div class="camp-metrica camp-metrica-larga">
+          <span class="camp-metrica-rotulo">Bônus ativos</span>
+          <strong id="camp-hud-extras" class="camp-metrica-valor">Sem bônus ativos</strong>
+        </div>
+      </div>
+
+      <div class="camp-hud-acoes">
+        <div class="camp-seed-box" title="Copie ou repita esta seed para jogar o mesmo mapa">
+          <span class="camp-seed-lbl">Seed</span>
+          <code id="camp-hud-seed" class="camp-seed-val num-tabular">BRI-0000</code>
+        </div>
+        <button id="btn-camp-ver-elenco" type="button" class="btn-secundario btn-camp-topo">
+          Elenco (18)
+        </button>
+        <button id="btn-camp-nova" type="button" class="btn-secundario btn-camp-topo">
+          Nova Campanha
+        </button>
+        <button id="btn-camp-titulo" type="button" class="btn-fantasma btn-camp-topo">
+          Início
+        </button>
+      </div>
+    </header>
+
+    <!-- Visão do Mapa de 12 Camadas -->
+    <main id="tela-mapa-campanha" class="camp-mapa-layout" aria-label="Mapa da campanha">
+      <section class="camp-mapa-palco">
+        <div class="camp-mapa-cabecalho">
+          <h2 class="titulo-bloco">Mapa da Temporada (12 Camadas)</h2>
+          <span class="camp-mapa-dica">Suba da base (F1) até o Chefão (FINAL)</span>
+        </div>
+        <div id="mapa-scroll-container" class="mapa-scroll-container">
+          <div class="mapa-canvas-rel">
+            <svg id="mapa-camadas-svg" class="mapa-camadas-svg" aria-hidden="true"></svg>
+            <div id="mapa-camadas-lista" class="mapa-camadas-lista"></div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="camp-mapa-sidebar" aria-label="Legenda e histórico da campanha">
+        <section class="bloco-painel">
+          <h2 class="titulo-bloco">Tipos de Nó</h2>
+          <div id="camp-legenda-nos" class="camp-legenda-nos"></div>
+        </section>
+
+        <section class="bloco-painel">
+          <h2 class="titulo-bloco">Diário da Campanha</h2>
+          <div id="camp-historico-lista" class="camp-historico-lista"></div>
+        </section>
+      </aside>
+    </main>
+
+    <!-- Visão do Nó Atual (Escalação, Treino, Mercado, Patrocínio, Evento, etc.) -->
+    <section id="tela-no-campanha" class="camp-no-container" aria-label="Evento do nó da campanha">
+      <div id="conteudo-no-campanha" class="camp-no-cartao"></div>
+    </section>
+
+    <!-- Visão de Fim de Campanha -->
+    <section id="tela-fim-campanha" class="camp-fim-container" aria-label="Resumo final da campanha">
+      <div class="camp-fim-cartao">
+        <h2 id="fim-camp-titulo" class="titulo-modal">Fim da Campanha</h2>
+        <p id="fim-camp-subtitulo" class="texto-modal"></p>
+        <div id="fim-camp-stats" class="grade-stats-finais grade-stats-camp"></div>
+        <div id="fim-camp-legado" class="fim-camp-legado" hidden></div>
+        <div class="camp-fim-historico-wrap">
+          <h3 class="escalacao-col-titulo">Resumo da Jornada</h3>
+          <div id="fim-camp-historico" class="camp-historico-lista"></div>
+        </div>
+        <div class="camp-fim-acoes">
+          <button id="btn-fim-camp-clube" type="button" class="btn-finalizar">
+            Ir para o Clube (Melhorias)
+          </button>
+          <button id="btn-fim-camp-repetir-seed" type="button" class="btn-secundario">
+            Repetir Mesma Seed
+          </button>
+          <button id="btn-fim-camp-nova" type="button" class="btn-primario">
+            Nova Campanha
+          </button>
+          <button id="btn-fim-camp-titulo" type="button" class="btn-fantasma">
+            Menu Inicial
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal de Inspeção do Elenco (Campanha) -->
+  <div id="modal-elenco-campanha" class="sobreposicao-modal" role="dialog" aria-modal="true" aria-labelledby="titulo-modal-elenco" hidden>
+    <div class="cartao-modal cartao-modal-elenco">
+      <div class="cabecalho-modal-sub">
+        <h2 id="titulo-modal-elenco" class="titulo-modal titulo-modal-sub">Elenco do Atlético Brisa</h2>
+        <button id="btn-fechar-elenco" type="button" class="btn-secundario">Fechar</button>
+      </div>
+      <div id="lista-elenco-campanha" class="lista-elenco-campanha"></div>
+    </div>
+  </div>
+
+  <!-- Estrutura Principal da Partida -->
+  <div class="app-partida">
+    <!-- Barra Superior: Placar, Turno Atual, Pontos de Comando e Controles -->
+    <header class="barra-placar" aria-label="Placar e turno atual">
+      <div class="bloco-marca">
+        <span class="marca-curta">Prancheta 11</span>
+      </div>
+
+      <div class="placar-central" aria-live="polite">
+        <div class="time-placar time-placar-meu">
+          <span id="sigla-meu-placar" class="sigla-time">BRI</span>
+          <span id="nome-meu-placar" class="nome-time-completo">Atlético Brisa</span>
+          <strong id="placar-meu" class="numero-placar">0</strong>
+        </div>
+
+        <span class="placar-x" aria-hidden="true">×</span>
+
+        <div class="time-placar time-placar-rival">
+          <strong id="placar-rival" class="numero-placar">0</strong>
+          <span id="nome-rival-placar" class="nome-time-completo">Ferroviária Sul</span>
+          <span id="sigla-rival-placar" class="sigla-time">FER</span>
+        </div>
+      </div>
+
+      <div class="bloco-turno-util">
+        <div class="indicador-turno" aria-live="polite">
+          <span id="turno-quem" class="turno-quem">Seu turno</span>
+          <span class="sep-meta" aria-hidden="true">·</span>
+          <span id="turno-contagem" class="turno-contagem">BRI 0/10 · FER 0/10</span>
+          <span class="sep-meta" aria-hidden="true">·</span>
+          <span id="subs-contagem" class="pontos-comando" title="Substituições realizadas">Sub 0/5</span>
+        </div>
+
+        <div class="acoes-util">
+          <button
+            id="btn-som"
+            type="button"
+            class="btn-icone"
+            aria-label="Alternar som"
+            aria-pressed="false"
+            title="Som (M)"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <path id="icone-som-ondas" d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" />
+            </svg>
+          </button>
+
+          <button
+            id="btn-pausa"
+            type="button"
+            class="btn-icone"
+            aria-label="Pausar partida"
+            title="Pausar (P ou Esc)"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="6" y="4" width="4" height="16" />
+              <rect x="14" y="4" width="4" height="16" />
+            </svg>
+          </button>
+
+          <button
+            id="btn-reiniciar-topo"
+            type="button"
+            class="btn-icone"
+            aria-label="Reiniciar partida"
+            title="Reiniciar (R)"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Área Central: Campo Vertical (Esq) + Painel Tático & Defesa (Dir) -->
+    <main class="area-central">
+      <section class="palco-campo" aria-label="Campo tático vertical">
+        <div class="rotulo-direcao-campo">
+          <span class="rotulo-ataque-dir">↑ Ataque · Gol Rival (GKR)</span>
+          <span id="fase-atual-rotulo" class="fase-atual-rotulo">Fase: Bola atrás · 4-3-3</span>
+        </div>
+
+        <div class="envelope-campo" id="envelope-campo">
+          <!-- Marcações clássicas de gramado vertical vistas de cima -->
+          <div class="marcacoes-gramado" aria-hidden="true">
+            <div class="linha-meio-horizontal"></div>
+            <div class="circulo-central"></div>
+            <div class="area-penal-topo"></div>
+            <div class="area-penal-base"></div>
+          </div>
+
+          <!-- Campo vertical: GKR em cima, grade 3x5 (Z5..Z1), GK embaixo -->
+          <div
+            id="grade-zonas"
+            class="grade-zonas"
+            data-testid="grade-zonas"
+            role="region"
+            aria-label="Campo vertical dividido em 17 zonas"
+          >
+            <div class="faixa-goleiro-topo">
+              <div class="zona-slot" data-zona-slot="GKR"></div>
+            </div>
+
+            <div class="grade-15-zonas">
+              <div class="zona-slot" data-zona-slot="Z5-E"></div>
+              <div class="zona-slot" data-zona-slot="Z5-C"></div>
+              <div class="zona-slot" data-zona-slot="Z5-D"></div>
+
+              <div class="zona-slot" data-zona-slot="Z4-E"></div>
+              <div class="zona-slot" data-zona-slot="Z4-C"></div>
+              <div class="zona-slot" data-zona-slot="Z4-D"></div>
+
+              <div class="zona-slot" data-zona-slot="Z3-E"></div>
+              <div class="zona-slot" data-zona-slot="Z3-C"></div>
+              <div class="zona-slot" data-zona-slot="Z3-D"></div>
+
+              <div class="zona-slot" data-zona-slot="Z2-E"></div>
+              <div class="zona-slot" data-zona-slot="Z2-C"></div>
+              <div class="zona-slot" data-zona-slot="Z2-D"></div>
+
+              <div class="zona-slot" data-zona-slot="Z1-E"></div>
+              <div class="zona-slot" data-zona-slot="Z1-C"></div>
+              <div class="zona-slot" data-zona-slot="Z1-D"></div>
+            </div>
+
+            <div class="faixa-goleiro-base">
+              <div class="zona-slot" data-zona-slot="GK"></div>
+            </div>
+          </div>
+
+          <!-- Camada SVG para linha da jogada e tipo/porcentagem no meio -->
+          <svg
+            id="camada-linha-jogada"
+            class="camada-linha-jogada"
+            aria-hidden="true"
+          ></svg>
+        </div>
+
+        <div class="rotulo-direcao-campo rotulo-direcao-base">
+          <span>Sua Defesa (GK)</span>
+          <span id="aviso-bonus-turno" class="aviso-bonus-turno" hidden>Contra-ataque +10%</span>
+        </div>
+
+        <!-- Barra de confirmação / status abaixo do campo -->
+        <div
+          id="barra-confirmacao"
+          class="barra-confirmacao"
+          data-ativo="false"
+          aria-live="polite"
+        >
+          <div class="barra-confirmacao-principal">
+            <div id="resumo-jogada-inline" class="resumo-jogada-inline">
+              Toque no portador da bola e depois em um companheiro ou zona vizinha.
+            </div>
+            <div class="botoes-confirmacao">
+              <button
+                id="btn-finalizar"
+                type="button"
+                class="btn-finalizar"
+                hidden
+              >
+                Finalizar ao Gol
+              </button>
+              <button
+                id="btn-cancelar-jogada"
+                type="button"
+                class="btn-secundario"
+                hidden
+              >
+                Cancelar
+              </button>
+              <button
+                id="btn-confirmar-jogada"
+                type="button"
+                class="btn-primario"
+                hidden
+              >
+                Confirmar Jogada
+              </button>
+            </div>
+          </div>
+          <div id="painel-habilidades-portador" class="painel-habilidades-portador" hidden></div>
+        </div>
+      </section>
+
+      <!-- Painel Lateral: Ordens Defensivas + Detalhes do Cálculo + Ficha + Legenda -->
+      <aside class="painel-tatico" aria-label="Ordens defensivas, detalhes do cálculo e ficha do jogador">
+        <section id="bloco-defesa" class="bloco-painel bloco-defesa" aria-label="Ordens defensivas" hidden>
+          <div class="cabecalho-defesa">
+            <h2 class="titulo-bloco">Ordem Defensiva</h2>
+            <span class="defesa-pc-badge">Gasto de estamina</span>
+          </div>
+          <p id="defesa-intencao-resumo" class="defesa-intencao-resumo"></p>
+
+          <div class="lista-ordens-defesa">
+            <button type="button" class="btn-ordem-defesa" data-ordem="pressionar">
+              <span class="ordem-topo">
+                <strong>Pressionar o portador</strong>
+                <span id="custo-ordem-pressionar" class="ordem-custo">−10 est. × 2</span>
+              </span>
+              <span class="ordem-desc">Pressão no portador ×1,5 na bola; time sobe 1 faixa (rival +10 se acertar).</span>
+              <span id="envolvidos-ordem-pressionar" class="ordem-envolvidos"></span>
+            </button>
+
+            <button type="button" class="btn-ordem-defesa" data-ordem="fechar_linha">
+              <span class="ordem-topo">
+                <strong>Fechar linha de passe</strong>
+                <span id="custo-ordem-fechar_linha" class="ordem-custo">−6 est. × 2</span>
+              </span>
+              <span class="ordem-desc">Pressão na linha ×1,5 no destino anunciado e ×0,8 nas demais zonas.</span>
+              <span id="envolvidos-ordem-fechar_linha" class="ordem-envolvidos"></span>
+            </button>
+
+            <button type="button" class="btn-ordem-defesa" data-ordem="recuar">
+              <span class="ordem-topo">
+                <strong>Recuar o bloco</strong>
+                <span id="custo-ordem-recuar" class="ordem-custo">Deslocamento</span>
+              </span>
+              <span class="ordem-desc">Time desce 1 faixa; frente e longo rival −10, trás e lateral +5.</span>
+              <span id="envolvidos-ordem-recuar" class="ordem-envolvidos"></span>
+            </button>
+
+            <button type="button" class="btn-ordem-defesa" data-ordem="falta_tatica">
+              <span class="ordem-topo">
+                <strong>Falta tática</strong>
+                <span id="custo-ordem-falta_tatica" class="ordem-custo">−8 est.</span>
+              </span>
+              <span id="desc-falta-tatica" class="ordem-desc">Interrompe e reinicia com bola parada (+10% em passes).</span>
+              <span id="envolvidos-ordem-falta_tatica" class="ordem-envolvidos"></span>
+            </button>
+
+            <div id="lista-ordens-habilidades" class="lista-ordens-habilidades"></div>
+
+            <button type="button" class="btn-ordem-defesa btn-ordem-neutra" data-ordem="nenhuma">
+              <span class="ordem-topo">
+                <strong>Manter marcação (sem ordem)</strong>
+                <span id="custo-ordem-nenhuma" class="ordem-custo">0 est.</span>
+              </span>
+              <span class="ordem-desc">Deixar o rival executar a jogada anunciada sem gastar estamina.</span>
+              <span id="envolvidos-ordem-nenhuma" class="ordem-envolvidos"></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="bloco-painel" aria-label="Detalhes do cálculo">
+          <h2 class="titulo-bloco">Detalhes do cálculo</h2>
+          <div id="detalhes-calculo" class="detalhes-calculo">
+            <p class="texto-suave">
+              Selecione o portador e um alvo (passe, condução ou finalização) para inspecionar tipo, base, ATAQUE, pressões, chance final e sorteio.
+            </p>
+          </div>
+        </section>
+
+        <section class="bloco-painel" aria-label="Ficha do jogador selecionado">
+          <h2 class="titulo-bloco">Ficha do Jogador</h2>
+          <div id="ficha-jogador" class="ficha-jogador">
+            <p class="texto-suave">Toque em qualquer chip para ver atributos (1 a 100) e zona-base.</p>
+          </div>
+        </section>
+
+        <section class="bloco-painel bloco-legenda" aria-label="Legenda da pressão rival">
+          <h2 class="titulo-bloco">Pressão na Linha (Rival)</h2>
+          <div class="escala-cobertura">
+            <span class="amostra-cor nivel-1" aria-hidden="true"></span>
+            <span class="amostra-cor nivel-2" aria-hidden="true"></span>
+            <span class="amostra-cor nivel-3" aria-hidden="true"></span>
+            <span class="amostra-cor nivel-4" aria-hidden="true"></span>
+          </div>
+          <p class="texto-legenda">
+            Vermelho mais intenso indica maior pressão na linha de passe do rival (0–100). Toque numa zona vizinha para conduzir (pressão no portador).
+          </p>
+        </section>
+      </aside>
+    </main>
+
+    <!-- Rodapé da Partida: Texto da Última Jogada -->
+    <footer class="barra-narracao" aria-label="Última jogada" aria-live="polite">
+      <span id="selo-ultima-jogada" class="selo-jogada tipo-inicio">Início</span>
+      <p id="texto-ultima-jogada" class="texto-ultima-jogada">
+        Apita o árbitro! Murilo (ZAG) inicia com a bola em Z1-C.
+      </p>
+    </footer>
+  </div>
+
+  <!-- Modal de Pausa -->
+  <div id="modal-pausa" class="sobreposicao-modal" role="dialog" aria-modal="true" aria-labelledby="titulo-pausa" hidden>
+    <div class="cartao-modal">
+      <h2 id="titulo-pausa" class="titulo-modal">Partida Pausada</h2>
+      <p class="texto-modal">
+        Placar atual: <strong id="pausa-placar" class="num-tabular">0 × 0</strong>
+      </p>
+      <div class="acoes-modal">
+        <button id="btn-retomar" type="button" class="btn-primario">Retomar</button>
+        <button id="btn-reiniciar-pausa" type="button" class="btn-secundario">Reiniciar Partida</button>
+        <button id="btn-voltar-titulo" type="button" class="btn-fantasma">Tela Inicial</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Substituição -->
+  <div id="modal-substituicao" class="sobreposicao-modal" role="dialog" aria-modal="true" aria-labelledby="titulo-sub" hidden>
+    <div class="cartao-modal cartao-modal-sub">
+      <div class="cabecalho-modal-sub">
+        <h2 id="titulo-sub" class="titulo-modal titulo-modal-sub">Substituir Jogador</h2>
+        <span id="sub-restantes-badge" class="sub-restantes-badge num-tabular">5 restantes</span>
+      </div>
+      <p id="sub-saindo-info" class="texto-modal texto-modal-sub"></p>
+      <div id="lista-reservas" class="lista-reservas" role="list"></div>
+      <div class="acoes-modal">
+        <button id="btn-cancelar-sub" type="button" class="btn-secundario">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Fim de Jogo -->
+  <div id="modal-fim" class="sobreposicao-modal" role="dialog" aria-modal="true" aria-labelledby="titulo-fim" hidden>
+    <div class="cartao-modal">
+      <h2 id="titulo-fim" class="titulo-modal">Fim de Jogo</h2>
+      <div id="placar-final-modal" class="placar-final-modal num-tabular">0 × 0</div>
+      <div id="stats-finais" class="grade-stats-finais"></div>
+      <p id="fim-campanha-nota" class="fim-campanha-nota" hidden></p>
+      <div class="acoes-modal">
+        <button id="btn-fim-voltar-campanha" type="button" class="btn-primario" hidden>
+          Continuar Campanha
+        </button>
+        <button id="btn-jogar-novamente" type="button" class="btn-primario" data-start="true">
+          Jogar Novamente
+        </button>
+        <button id="btn-fim-titulo" type="button" class="btn-secundario">Tela Inicial</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
